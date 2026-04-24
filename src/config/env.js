@@ -23,7 +23,7 @@ const env = {
   },
   agora: {
     appId: process.env.AGORA_APP_ID || '',
-    appCert: process.env.AGORA_APP_CERT || '',
+    appCert: process.env.AGORA_APP_CERTIFICATE|| '',
   },
 };
 
