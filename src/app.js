@@ -48,6 +48,7 @@ app.get('/', (_req, res) => {
 
 app.use('/uploads', express.static(require('path').join(process.cwd(), 'uploads')));
 app.use('/api', require('./routes'));
+app.use("/api/agora", require("./routes/agora")); // agora routes
 
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 app.use(notFound);

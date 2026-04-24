@@ -5,8 +5,8 @@ const DEFAULT_JWT_SECRET = 'dev_insecure_secret_change_me';
 const env = {
   nodeEnv: process.env.NODE_ENV || 'development',
   port: parseInt(process.env.PORT || '5000', 10),
-  clientUrl: process.env.CLIENT_URL || 'https://lokaly-frontend-main-f6fz.vercel.app',
-  mongoUri: process.env.MONGO_URI || 'mongodb+srv://LokalyUser:Lokaly-bigi-hackaton2026@cluster0.ziehypq.mongodb.net/lokaly',
+  clientUrl: process.env.CLIENT_URL || '',
+  mongoUri: process.env.MONGO_URI || '',
   jwt: {
     secret: process.env.JWT_SECRET || DEFAULT_JWT_SECRET,
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
