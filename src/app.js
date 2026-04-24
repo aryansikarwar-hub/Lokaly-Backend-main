@@ -55,8 +55,8 @@ app.get('/', (_req, res) => {
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 // ROUTES ✅
-app.use('/api/agora', require("./routes/agora"));
-app.use('/api/auth', require("./routes/auth"));   // ⭐ ADD THIS
+// app.use('/api/agora', require("./routes/agora"));
+// app.use('/api/auth', require("./routes/auth"));   // ⭐ ADD THIS
 app.use('/api', require('./routes'));
 
 // Error handlers LAST
