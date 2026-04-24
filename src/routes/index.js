@@ -19,4 +19,7 @@ router.use('/faq', require('./faqRoutes'));
 router.use('/leaderboard', require('./leaderboardRoutes'));
 router.use('/users', require('./userRoutes'));
 
+// ✅ ADD THIS
+router.use('/agora', require('./agora'));
+
 module.exports = router;
