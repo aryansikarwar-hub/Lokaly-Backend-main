@@ -1,3 +1,4 @@
+const router = require('express').Router();
 router.post("/token", (req, res) => {
   const { channelName, role } = req.body || {};
 
