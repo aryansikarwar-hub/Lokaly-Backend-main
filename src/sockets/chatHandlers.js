@@ -38,7 +38,7 @@ module.exports = function chatHandlers(io, socket) {
           } catch (_) { /* non-fatal */ }
         } catch (err) {
           moderation = { flagged: true, label: 'UNKNOWN', score: 0 };
-          // eslint-disable-next-line no-console
+           
           console.error('[chat-socket] moderation failed:', err.message);
         }
       }
