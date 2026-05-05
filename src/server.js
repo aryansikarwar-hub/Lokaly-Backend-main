@@ -1,29 +1,41 @@
-const http = require('http');
-const app = require('./app');
-const env = require('./config/env');
-const { connectDB } = require('./config/db');
-const logger = require('./utils/logger');
-const { attachSockets } = require('./sockets');
+const http = require("http");
+const app = require("./app");
+const env = require("./config/env");
+const { connectDB } = require("./config/db");
+const logger = require("./utils/logger");
+const { attachSockets } = require("./sockets");
+require("dotenv").config();
 
 const server = http.createServer(app);
 attachSockets(server, app);
+
+const agoraRoutes = require("./routes/agora");
+app.use("/api/agora", agoraRoutes);
+
+const liveRoutes = require("./routes/liveRoutes");
+app.use("/api/live", liveRoutes);
 
 (async () => {
   try {
     await connectDB();
   } catch (err) {
-    logger.warn('API starting without MongoDB (will retry on first request).', err.message);
+    logger.warn(
+      "API starting without MongoDB (will retry on first request).",
+      err.message,
+    );
   }
   server.listen(env.port, () => {
-    logger.info(`API listening on http://localhost:${env.port} (${env.nodeEnv})`);
+    logger.info(
+      `API listening on http://localhost:${env.port} (${env.nodeEnv})`,
+    );
   });
 
   // Recurring coin-expiry sweep
   try {
-    const { startCoinExpiryJob } = require('./services/coinsService');
+    const { startCoinExpiryJob } = require("./services/coinsService");
     startCoinExpiryJob();
   } catch (err) {
-    logger.warn('coin expiry job failed to start:', err.message);
+    logger.warn("coin expiry job failed to start:", err.message);
   }
 })();
 
@@ -33,7 +45,7 @@ const shutdown = (signal) => {
   setTimeout(() => process.exit(1), 10000).unref();
 };
 
-process.on('SIGINT', () => shutdown('SIGINT'));
-process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 module.exports = server;

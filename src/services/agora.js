@@ -1,9 +1,9 @@
 import AgoraRTC from "agora-rtc-sdk-ng";
 
 // ENV (Vite)
-export const APP_ID =
-  import.meta.env?.VITE_AGORA_APP_ID ||
-  "54993db7874e4d318e89c32e13de8f4a";
+export const APP_ID = import.meta.env.VITE_AGORA_APP_ID;
+
+console.log("Agora APP_ID:", APP_ID);
 
 console.log("Agora APP_ID:", APP_ID);
 
