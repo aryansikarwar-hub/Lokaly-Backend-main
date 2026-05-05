@@ -20,6 +20,8 @@ const Referral = require('./models/Referral');
 const Conversation = require('./models/Conversation');
 const Message = require('./models/Message');
 const CoinLedger = require('./models/CoinLedger');
+const CoHost = require('./models/CoHost');
+const CoHostBooking = require('./models/CoHostBooking');
 
 // ---------- Indian seed pools ----------
 
@@ -149,6 +151,100 @@ const HINDI_CAPTIONS = [
 
 const POST_EMOJIS = ['✨', '❤️', '🪔', '🧵', '🎨', '🛍️', '🌸', '🕉️'];
 
+// ---------- Co-Host seed data (Talent Marketplace) ----------
+const SAMPLE_COHOSTS = [
+  {
+    name: 'Aanya Iyer',
+    bio: 'Expert handloom curator with 5+ years hosting live drops. Fluent in 3 languages.',
+    location: { city: 'Bengaluru', state: 'Karnataka' },
+    category: 'Sarees',
+    specialty: 'Handloom & Sarees',
+    languages: ['HI', 'EN', 'TA'],
+    perStreamRate: 1499,
+    streamsHosted: 127,
+    rating: 4.9,
+    totalReviews: 89,
+    karmaScore: 92,
+    isAvailable: true,
+    isVerified: true,
+  },
+  {
+    name: 'Rohan Nair',
+    bio: 'Spice connoisseur from Kerala. Known for engaging product demos and recipe tips.',
+    location: { city: 'Kochi', state: 'Kerala' },
+    category: 'Spices',
+    specialty: 'Spices & Pickles',
+    languages: ['EN', 'ML'],
+    perStreamRate: 1199,
+    streamsHosted: 89,
+    rating: 4.8,
+    totalReviews: 67,
+    karmaScore: 88,
+    isAvailable: true,
+    isVerified: true,
+  },
+  {
+    name: 'Priya Sharma',
+    bio: 'Pottery enthusiast and storyteller. Brings every ceramic piece to life on camera.',
+    location: { city: 'Jaipur', state: 'Rajasthan' },
+    category: 'Pottery',
+    specialty: 'Pottery & Ceramics',
+    languages: ['HI', 'EN'],
+    perStreamRate: 1699,
+    streamsHosted: 156,
+    rating: 4.9,
+    totalReviews: 112,
+    karmaScore: 94,
+    isAvailable: true,
+    isVerified: true,
+  },
+  {
+    name: 'Kavya Reddy',
+    bio: 'Fashion-forward host specializing in ethnic wear. South Indian style expert.',
+    location: { city: 'Hyderabad', state: 'Telangana' },
+    category: 'Ethnic Wear',
+    specialty: 'Ethnic Wear',
+    languages: ['TE', 'EN', 'HI'],
+    perStreamRate: 999,
+    streamsHosted: 64,
+    rating: 4.7,
+    totalReviews: 45,
+    karmaScore: 82,
+    isAvailable: true,
+    isVerified: true,
+  },
+  {
+    name: 'Arjun Singh',
+    bio: 'Top-rated jewellery host. Expert at bridal and traditional collections.',
+    location: { city: 'Delhi', state: 'Delhi' },
+    category: 'Jewellery',
+    specialty: 'Jewellery',
+    languages: ['HI', 'PA', 'EN'],
+    perStreamRate: 1899,
+    streamsHosted: 203,
+    rating: 4.9,
+    totalReviews: 178,
+    karmaScore: 96,
+    isAvailable: true,
+    isVerified: true,
+  },
+  {
+    name: 'Meera Banerjee',
+    bio: 'Madhubani art specialist. Brings cultural stories alive through every stream.',
+    location: { city: 'Kolkata', state: 'West Bengal' },
+    category: 'Madhubani Art',
+    specialty: 'Madhubani Art',
+    languages: ['BN', 'HI', 'EN'],
+    perStreamRate: 1299,
+    streamsHosted: 112,
+    rating: 4.8,
+    totalReviews: 95,
+    karmaScore: 90,
+    isAvailable: true,
+    isVerified: true,
+  },
+];
+
 // ---------- helpers ----------
 const rand = (n) => Math.floor(Math.random() * n);
 const pick = (arr) => arr[rand(arr.length)];
@@ -166,6 +262,8 @@ async function clearAll() {
     Conversation.deleteMany({}),
     Message.deleteMany({}),
     CoinLedger.deleteMany({}),
+    CoHost.deleteMany({}),
+    CoHostBooking.deleteMany({}),
   ]);
   console.log('[seed] cleared all collections');
 }
@@ -425,12 +523,67 @@ async function seed() {
   convo.lastMessage = { text: '7 days easy return...', at: new Date(), from: demoSeller._id };
   await convo.save();
 
+  // ---- Co-Hosts (Talent Marketplace) ----
+  console.log('[seed] creating co-hosts for talent marketplace...');
+  const coHostUsers = [];
+  for (let i = 0; i < SAMPLE_COHOSTS.length; i++) {
+    const cohostData = SAMPLE_COHOSTS[i];
+    
+    // Create a user account for each co-host
+    const cohostUser = await User.create({
+      name: cohostData.name,
+      email: `cohost${i + 1}@lokaly.in`,
+      passwordHash: 'password123',
+      role: 'seller', // co-hosts are sellers
+      avatar: `https://i.pravatar.cc/200?u=cohost${i + 1}`,
+      bio: cohostData.bio,
+      phone: `+919${Math.floor(100000000 + Math.random() * 900000000)}`,
+      location: {
+        city: cohostData.location.city,
+        state: cohostData.location.state,
+        pincode: '000000',
+        geo: { type: 'Point', coordinates: [77.0, 20.0] },
+      },
+      language: cohostData.languages[0].toLowerCase(),
+      trustScore: 80 + rand(20),
+      fraudKarma: 80 + rand(20),
+      isVerifiedSeller: cohostData.isVerified,
+    });
+    coHostUsers.push(cohostUser);
+
+    // Create the CoHost profile linked to the user
+    await CoHost.create({
+      user: cohostUser._id,
+      name: cohostData.name,
+      bio: cohostData.bio,
+      profileImage: `https://i.pravatar.cc/400?u=cohost${i + 1}`,
+      location: cohostData.location,
+      category: cohostData.category,
+      specialty: cohostData.specialty,
+      languages: cohostData.languages,
+      perStreamRate: cohostData.perStreamRate,
+      streamsHosted: cohostData.streamsHosted,
+      rating: cohostData.rating,
+      totalReviews: cohostData.totalReviews,
+      karmaScore: cohostData.karmaScore,
+      isAvailable: cohostData.isAvailable,
+      isVerified: cohostData.isVerified,
+      isActive: true,
+      verifiedAt: cohostData.isVerified ? new Date() : null,
+      totalBookings: cohostData.streamsHosted,
+      completedBookings: Math.floor(cohostData.streamsHosted * 0.95),
+      cancelledBookings: Math.floor(cohostData.streamsHosted * 0.05),
+    });
+  }
+
   console.log(`
 [seed] ✨ Done!
   sellers: ${sellers.length}  buyers: ${buyers.length + 1}  products: ${products.length}
+  co-hosts: ${SAMPLE_COHOSTS.length}
   admin: admin@lokaly.in / admin123
   demo buyer: demo@lokaly.in / demo1234
   demo seller: shop@lokaly.in / demo1234
+  co-hosts: cohost{1..6}@lokaly.in (password: password123)
   all seed accounts: seller{1..20}@lokaly.in / buyer{1..40}@lokaly.in  (password: password123)
 `);
   await mongoose.disconnect();
