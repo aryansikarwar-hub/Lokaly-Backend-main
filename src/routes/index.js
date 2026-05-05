@@ -22,4 +22,7 @@ router.use('/users', require('./userRoutes'));
 // ✅ ADD THIS
 router.use('/agora', require('./agora'));
 
+// ⭐ NEW LINE - YE ADD KARO
+router.use('/cohosts', require('./coHostRoutes'));
+
 module.exports = router;
