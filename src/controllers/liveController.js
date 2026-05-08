@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const LiveSession = require("../models/LiveSession");
 const ApiError = require("../utils/ApiError");
 const asyncHandler = require("../utils/asyncHandler");
+const { createAndEmitNotification } = require("../services/notificationService");
 
 exports.list = asyncHandler(async (req, res) => {
   const { status = "live" } = req.query;
@@ -64,6 +65,25 @@ exports.start = asyncHandler(async (req, res) => {
   s.startedAt = new Date();
   await s.save();
   req.app.get("io")?.emit("live:started", { id: s._id, roomId: s.roomId });
+  const targetUsers = [
+    ...new Set([
+      ...s.coHosts.map((id) => String(id)),
+      ...(s.groupBuy?.participants || []).map((id) => String(id)),
+    ]),
+  ].filter((id) => id !== String(req.user._id));
+  await Promise.all(
+    targetUsers.map((uid) =>
+      createAndEmitNotification({
+        userId: uid,
+        type: "live_started",
+        message: `${s.title} just went live`,
+        sender: req.user._id,
+        liveSessionId: s._id,
+        dedupeKey: `live:${s._id}:started:${uid}`,
+        meta: { roomId: s.roomId, title: s.title },
+      })
+    )
+  );
   res.json({ session: s });
 });
 

@@ -1,5 +1,6 @@
 const Conversation = require('../models/Conversation');
 const Message = require('../models/Message');
+const { createAndEmitNotification } = require('../services/notificationService');
 
 module.exports = function chatHandlers(io, socket) {
   if (!socket.userId) return;
@@ -64,6 +65,15 @@ module.exports = function chatHandlers(io, socket) {
         conversationId,
         from: socket.userId,
         preview: (text || '[attachment]').slice(0, 140),
+      });
+      await createAndEmitNotification({
+        userId: toUser,
+        type: 'chat_message',
+        message: `New message: ${(text || '[attachment]').slice(0, 100)}`,
+        sender: socket.userId,
+        conversationId,
+        dedupeKey: `chat:${msg._id}`,
+        meta: { messageId: String(msg._id) },
       });
       if (moderation.flagged) {
         io.to(`user:${toUser}`).emit('chat:flagged', {

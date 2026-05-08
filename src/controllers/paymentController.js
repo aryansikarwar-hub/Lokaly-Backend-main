@@ -4,6 +4,7 @@ const ApiError = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
 const env = require('../config/env');
 const { client, isConfigured } = require('../config/razorpay');
+const { createAndEmitNotification } = require('../services/notificationService');
 
 exports.createRazorpayOrder = asyncHandler(async (req, res) => {
   const order = await Order.findById(req.params.orderId);
@@ -63,6 +64,12 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
     };
     order.addTimeline('paid', 'Mock payment accepted (no Razorpay keys configured)');
     await order.save();
+    await createAndEmitNotification({
+      userId: order.buyer,
+      type: 'order',
+      message: `Payment received for order #${order._id}`,
+      orderId: order._id,
+    });
     return res.json({ ok: true, order, mock: true });
   }
 
@@ -80,6 +87,12 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
   order.payment.paidAt = new Date();
   order.addTimeline('paid', 'Payment verified via Razorpay');
   await order.save();
+  await createAndEmitNotification({
+    userId: order.buyer,
+    type: 'order',
+    message: `Payment received for order #${order._id}`,
+    orderId: order._id,
+  });
 
   // Clear cart once paid
   try {

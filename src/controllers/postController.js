@@ -1,6 +1,7 @@
 const Post = require('../models/Post');
 const ApiError = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
+const { createAndEmitNotification } = require('../services/notificationService');
 
 function extractHashtags(text = '') {
   return [...new Set((text.match(/#[\p{L}\p{N}_]+/gu) || []).map((t) => t.slice(1).toLowerCase()))];
@@ -60,7 +61,7 @@ exports.like = asyncHandler(async (req, res) => {
 });
 
 exports.comment = asyncHandler(async (req, res) => {
-  const { text } = req.body || {};
+  const { text, replyToUserId } = req.body || {};
   if (!text || !text.trim()) throw ApiError.badRequest('text required');
   const post = await Post.findById(req.params.id);
   if (!post) throw ApiError.notFound('Post not found');
@@ -71,10 +72,45 @@ exports.comment = asyncHandler(async (req, res) => {
     moderation = await moderateText(text);
   } catch (_) { /* moderation optional until T18 lands */ }
 
-  post.comments.push({ user: req.user._id, text: text.trim(), moderation });
+  post.comments.push({
+    user: req.user._id,
+    replyTo: replyToUserId || null,
+    text: text.trim(),
+    moderation,
+  });
   await post.save();
   await post.populate('comments.user', 'name avatar');
-  res.status(201).json({ comment: post.comments[post.comments.length - 1] });
+  const createdComment = post.comments[post.comments.length - 1];
+
+  if (String(post.author) !== String(req.user._id)) {
+    await createAndEmitNotification({
+      userId: post.author,
+      type: 'post_comment',
+      message: 'Someone commented on your post',
+      sender: req.user._id,
+      postId: post._id,
+      dedupeKey: `post:${post._id}:comment:${createdComment._id}:author`,
+      meta: { commentId: String(createdComment._id) },
+    });
+  }
+
+  if (
+    replyToUserId &&
+    String(replyToUserId) !== String(req.user._id) &&
+    String(replyToUserId) !== String(post.author)
+  ) {
+    await createAndEmitNotification({
+      userId: replyToUserId,
+      type: 'comment_reply',
+      message: 'You got a reply on a comment',
+      sender: req.user._id,
+      postId: post._id,
+      dedupeKey: `post:${post._id}:comment:${createdComment._id}:reply:${replyToUserId}`,
+      meta: { commentId: String(createdComment._id) },
+    });
+  }
+
+  res.status(201).json({ comment: createdComment });
 });
 
 exports.share = asyncHandler(async (req, res) => {
