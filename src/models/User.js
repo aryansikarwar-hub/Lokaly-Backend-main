@@ -71,6 +71,30 @@ userSchema.pre('save', async function preSave(next) {
   next();
 });
 
+userSchema.post("save", async function postSave(doc) {
+  // Only sync when a seller's location actually changed.
+  // We can't easily check `isModified` in a post hook, so we just sync
+  // unconditionally for sellers — it's a single updateMany, very cheap.
+  if (doc.role !== "seller") return;
+  if (
+    !doc.location ||
+    !doc.location.geo ||
+    !Array.isArray(doc.location.geo.coordinates)
+  )
+    return;
+  if (doc.location.geo.coordinates.length !== 2) return;
+
+  try {
+    // Lazy require to avoid circular dependency between User and Product.
+    const Product = require("./Product");
+    await Product.syncSellerLocation(doc._id, doc.location);
+  } catch (err) {
+    // Don't fail the user save just because product sync hiccupped.
+    // eslint-disable-next-line no-console
+    console.warn("[User postSave] product location sync failed:", err.message);
+  }
+});
+
 userSchema.methods.verifyPassword = function verifyPassword(plain) {
   return bcrypt.compare(plain, this.passwordHash);
 };
