@@ -18,6 +18,7 @@ router.use('/stress', require('./stressRoutes'));
 router.use('/faq', require('./faqRoutes'));
 router.use('/leaderboard', require('./leaderboardRoutes'));
 router.use('/users', require('./userRoutes'));
+router.use('/notifications',require('./notificationRoutes'));
 
 // ✅ ADD THIS
 router.use('/agora', require('./agora'));

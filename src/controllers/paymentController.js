@@ -4,6 +4,7 @@ const ApiError = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
 const env = require('../config/env');
 const { client, isConfigured } = require('../config/razorpay');
+const { createAndEmitNotification } = require('../services/notificationService');
 
 exports.createRazorpayOrder = asyncHandler(async (req, res) => {
   const order = await Order.findById(req.params.orderId);
@@ -73,24 +74,15 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
       paidAt: new Date(),
       mode: "mock",
     };
-    order.addTimeline(
-      "paid",
-      "Mock payment accepted (no Razorpay keys configured)",
-    );
-  } else {
-    const expected = crypto
-      .createHmac("sha256", env.razorpay.keySecret)
-      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
-      .digest("hex");
-
-    if (expected !== razorpay_signature) {
-      throw ApiError.badRequest("Invalid payment signature");
-    }
-
-    order.payment.paymentId = razorpay_payment_id;
-    order.payment.signature = razorpay_signature;
-    order.payment.paidAt = new Date();
-    order.addTimeline("paid", "Payment verified via Razorpay");
+    order.addTimeline('paid', 'Mock payment accepted (no Razorpay keys configured)');
+    await order.save();
+    await createAndEmitNotification({
+      userId: order.buyer,
+      type: 'order',
+      message: `Payment received for order #${order._id}`,
+      orderId: order._id,
+    });
+    return res.json({ ok: true, order, mock: true });
   }
 
   // ─── 2. Save the paid order BEFORE deducting coins ─────────────────────
@@ -138,7 +130,19 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
     }
   }
 
-  // ─── 4. Clear cart once paid ───────────────────────────────────────────
+  order.payment.paymentId = razorpay_payment_id;
+  order.payment.signature = razorpay_signature;
+  order.payment.paidAt = new Date();
+  order.addTimeline('paid', 'Payment verified via Razorpay');
+  await order.save();
+  await createAndEmitNotification({
+    userId: order.buyer,
+    type: 'order',
+    message: `Payment received for order #${order._id}`,
+    orderId: order._id,
+  });
+
+  // Clear cart once paid
   try {
     const Cart = require("../models/Cart");
     await Cart.updateOne({ user: order.buyer }, { $set: { items: [] } });
