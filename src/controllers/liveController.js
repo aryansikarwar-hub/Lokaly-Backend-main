@@ -222,10 +222,6 @@ exports.spin = asyncHandler(async (req, res) => {
   }
 
   // 💰 4. Apply reward
-  if (prize.type === "coins") {
-    req.user.coins += prize.value;
-  }
-
   if (prize.type === "discount") {
     const code = `LIVE${Math.floor(1000 + Math.random() * 9000)}`;
 
@@ -240,18 +236,17 @@ exports.spin = asyncHandler(async (req, res) => {
     prize.code = code;
   }
 
-  // ⏱ 5. Save cooldown
+  // 💰 5. Save cooldown + coupons (BEFORE awarding coins to avoid overwrite)
   req.user.lastSpinAt = Date.now();
   await req.user.save();
-  if (!s.spins) s.spins = [];
 
-  s.spins.push({
-    user: req.user._id,
-    prize: prize.label,
-    at: new Date(),
-  });
-
-  await s.save();
+  if (prize.type === "coins") {
+    const { award } = require("../services/coinsService");
+    await award(req.user._id, prize.value, "live_spin", {
+      sessionId: s._id,
+      prizeLabel: prize.label,
+    });
+  }
 
   // 📡 6. Emit socket event
   req.app.get("io")?.to(`live:${s.roomId}`).emit("live:spin", {
