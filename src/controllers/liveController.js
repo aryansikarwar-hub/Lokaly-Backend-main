@@ -1,34 +1,43 @@
-const crypto = require('crypto');
-const LiveSession = require('../models/LiveSession');
-const ApiError = require('../utils/ApiError');
-const asyncHandler = require('../utils/asyncHandler');
+const crypto = require("crypto");
+const LiveSession = require("../models/LiveSession");
+const ApiError = require("../utils/ApiError");
+const asyncHandler = require("../utils/asyncHandler");
 
 exports.list = asyncHandler(async (req, res) => {
-  const { status = 'live' } = req.query;
-  const filter = status === 'all' ? {} : { status };
+  const { status = "live" } = req.query;
+  const filter = status === "all" ? {} : { status };
   const sessions = await LiveSession.find(filter)
     .sort({ startedAt: -1, scheduledAt: -1 })
-    .populate('host', 'name shopName avatar trustScore isVerifiedSeller')
-    .populate('featuredProducts', 'title price images slug');
+    .populate("host", "name shopName avatar trustScore isVerifiedSeller")
+    .populate("featuredProducts", "title price images slug");
   res.json({ sessions });
 });
 
 exports.getById = asyncHandler(async (req, res) => {
   const s = await LiveSession.findById(req.params.id)
-    .populate('host', 'name shopName avatar trustScore isVerifiedSeller')
-    .populate('coHosts', 'name avatar')
-    .populate('featuredProducts', 'title price images slug stock');
-  if (!s) throw ApiError.notFound('Live session not found');
+    .populate("host", "name shopName avatar trustScore isVerifiedSeller")
+    .populate("coHosts", "name avatar")
+    .populate("featuredProducts", "title price images slug stock");
+  if (!s) throw ApiError.notFound("Live session not found");
   res.json({ session: s });
 });
 
 exports.create = asyncHandler(async (req, res) => {
-  if (req.user.role !== 'seller') throw ApiError.forbidden('Only sellers can host');
-  const { title, description, coverImage, category, scheduledAt, featuredProducts = [], groupBuy } = req.body || {};
-  if (!title) throw ApiError.badRequest('title required');
+  if (req.user.role !== "seller")
+    throw ApiError.forbidden("Only sellers can host");
+  const {
+    title,
+    description,
+    coverImage,
+    category,
+    scheduledAt,
+    featuredProducts = [],
+    groupBuy,
+  } = req.body || {};
+  if (!title) throw ApiError.badRequest("title required");
 
-  const roomId = `live_${crypto.randomBytes(4).toString('hex')}`;
-  const streamKey = crypto.randomBytes(16).toString('hex');
+  const roomId = `live_${crypto.randomBytes(4).toString("hex")}`;
+  const streamKey = crypto.randomBytes(16).toString("hex");
 
   const s = await LiveSession.create({
     host: req.user._id,
@@ -41,7 +50,7 @@ exports.create = asyncHandler(async (req, res) => {
     groupBuy,
     roomId,
     streamKey,
-    status: scheduledAt ? 'scheduled' : 'live',
+    status: scheduledAt ? "scheduled" : "live",
     startedAt: scheduledAt ? undefined : new Date(),
   });
   res.status(201).json({ session: s });
@@ -51,10 +60,10 @@ exports.start = asyncHandler(async (req, res) => {
   const s = await LiveSession.findById(req.params.id);
   if (!s) throw ApiError.notFound();
   if (String(s.host) !== String(req.user._id)) throw ApiError.forbidden();
-  s.status = 'live';
+  s.status = "live";
   s.startedAt = new Date();
   await s.save();
-  req.app.get('io')?.emit('live:started', { id: s._id, roomId: s.roomId });
+  req.app.get("io")?.emit("live:started", { id: s._id, roomId: s.roomId });
   res.json({ session: s });
 });
 
@@ -62,10 +71,10 @@ exports.end = asyncHandler(async (req, res) => {
   const s = await LiveSession.findById(req.params.id);
   if (!s) throw ApiError.notFound();
   if (String(s.host) !== String(req.user._id)) throw ApiError.forbidden();
-  s.status = 'ended';
+  s.status = "ended";
   s.endedAt = new Date();
   await s.save();
-  req.app.get('io')?.to(`live:${s.roomId}`).emit('live:ended', { id: s._id });
+  req.app.get("io")?.to(`live:${s.roomId}`).emit("live:ended", { id: s._id });
   res.json({ session: s });
 });
 
@@ -73,12 +82,22 @@ exports.addFlashDeal = asyncHandler(async (req, res) => {
   const s = await LiveSession.findById(req.params.id);
   if (!s) throw ApiError.notFound();
   if (String(s.host) !== String(req.user._id)) throw ApiError.forbidden();
-  const { product, discountPct, durationSeconds = 30, maxClaims = 20 } = req.body || {};
-  const deal = { product, discountPct, endsAt: new Date(Date.now() + durationSeconds * 1000), maxClaims };
+  const {
+    product,
+    discountPct,
+    durationSeconds = 30,
+    maxClaims = 20,
+  } = req.body || {};
+  const deal = {
+    product,
+    discountPct,
+    endsAt: new Date(Date.now() + durationSeconds * 1000),
+    maxClaims,
+  };
   s.flashDeals.push(deal);
   await s.save();
   const created = s.flashDeals[s.flashDeals.length - 1];
-  req.app.get('io')?.to(`live:${s.roomId}`).emit('live:flashDeal', created);
+  req.app.get("io")?.to(`live:${s.roomId}`).emit("live:flashDeal", created);
   res.status(201).json({ deal: created });
 });
 
@@ -86,13 +105,21 @@ exports.claimFlashDeal = asyncHandler(async (req, res) => {
   const s = await LiveSession.findById(req.params.id);
   if (!s) throw ApiError.notFound();
   const deal = s.flashDeals.id(req.params.dealId);
-  if (!deal) throw ApiError.notFound('deal');
-  if (deal.endsAt < new Date()) throw ApiError.badRequest('deal expired');
-  if (deal.claimedBy.length >= deal.maxClaims) throw ApiError.badRequest('deal sold out');
-  if (deal.claimedBy.some((u) => String(u) === String(req.user._id))) throw ApiError.badRequest('already claimed');
+  if (!deal) throw ApiError.notFound("deal");
+  if (deal.endsAt < new Date()) throw ApiError.badRequest("deal expired");
+  if (deal.claimedBy.length >= deal.maxClaims)
+    throw ApiError.badRequest("deal sold out");
+  if (deal.claimedBy.some((u) => String(u) === String(req.user._id)))
+    throw ApiError.badRequest("already claimed");
   deal.claimedBy.push(req.user._id);
   await s.save();
-  req.app.get('io')?.to(`live:${s.roomId}`).emit('live:dealClaimed', { dealId: deal._id, remaining: deal.maxClaims - deal.claimedBy.length });
+  req.app
+    .get("io")
+    ?.to(`live:${s.roomId}`)
+    .emit("live:dealClaimed", {
+      dealId: deal._id,
+      remaining: deal.maxClaims - deal.claimedBy.length,
+    });
   res.json({ ok: true, deal });
 });
 
@@ -101,11 +128,15 @@ exports.addPoll = asyncHandler(async (req, res) => {
   if (!s) throw ApiError.notFound();
   if (String(s.host) !== String(req.user._id)) throw ApiError.forbidden();
   const { question, options } = req.body || {};
-  if (!question || !Array.isArray(options) || options.length < 2) throw ApiError.badRequest('invalid poll');
-  s.polls.push({ question, options: options.map((text) => ({ text, votes: 0 })) });
+  if (!question || !Array.isArray(options) || options.length < 2)
+    throw ApiError.badRequest("invalid poll");
+  s.polls.push({
+    question,
+    options: options.map((text) => ({ text, votes: 0 })),
+  });
   await s.save();
   const poll = s.polls[s.polls.length - 1];
-  req.app.get('io')?.to(`live:${s.roomId}`).emit('live:poll', poll);
+  req.app.get("io")?.to(`live:${s.roomId}`).emit("live:poll", poll);
   res.status(201).json({ poll });
 });
 
@@ -114,46 +145,116 @@ exports.votePoll = asyncHandler(async (req, res) => {
   const s = await LiveSession.findById(req.params.id);
   if (!s) throw ApiError.notFound();
   const poll = s.polls.id(req.params.pollId);
-  if (!poll) throw ApiError.notFound('poll');
-  if (poll.voters.some((u) => String(u) === String(req.user._id))) throw ApiError.badRequest('already voted');
-  if (!poll.options[optionIndex]) throw ApiError.badRequest('bad option');
+  if (!poll) throw ApiError.notFound("poll");
+  if (poll.voters.some((u) => String(u) === String(req.user._id)))
+    throw ApiError.badRequest("already voted");
+  if (!poll.options[optionIndex]) throw ApiError.badRequest("bad option");
   poll.options[optionIndex].votes += 1;
   poll.voters.push(req.user._id);
   await s.save();
-  req.app.get('io')?.to(`live:${s.roomId}`).emit('live:pollUpdate', poll);
+  req.app.get("io")?.to(`live:${s.roomId}`).emit("live:pollUpdate", poll);
   res.json({ poll });
 });
 
 exports.spin = asyncHandler(async (req, res) => {
   const s = await LiveSession.findById(req.params.id);
   if (!s) throw ApiError.notFound();
-  // Spin-the-wheel: random discount drawn from a fixed palette.
-  const prizes = [
-    { label: '5% off', type: 'discount', value: 5 },
-    { label: '10% off', type: 'discount', value: 10 },
-    { label: 'Free shipping', type: 'shipping', value: 0 },
-    { label: '50 coins', type: 'coins', value: 50 },
-    { label: '15% off', type: 'discount', value: 15 },
-    { label: 'Try again', type: 'none', value: 0 },
-  ];
-  const prize = prizes[Math.floor(Math.random() * prizes.length)];
-  if (prize.type === 'coins') {
-    req.user.coins += prize.value;
-    await req.user.save();
+  // ❌ Prevent spin if stream not live
+  if (s.status !== "live") {
+    throw ApiError.badRequest("Spin available only during live stream");
   }
-  req.app.get('io')?.to(`live:${s.roomId}`).emit('live:spin', { user: req.user._id, prize });
+
+  // ❌ Prevent multiple spins per user (per session)
+  const alreadySpun = s.spins?.some(
+    (spin) => String(spin.user) === String(req.user._id),
+  );
+
+  if (alreadySpun) {
+    throw ApiError.badRequest("You already spun this session");
+  }
+
+  // 🛑 1. Cooldown check
+  if (req.user.lastSpinAt && Date.now() - req.user.lastSpinAt < 10000) {
+    throw ApiError.badRequest("Please wait before spinning again");
+  }
+
+  // 🎯 2. Weighted prizes
+  const prizes = [
+    { label: "5% off", type: "discount", value: 5, weight: 30 },
+    { label: "10% off", type: "discount", value: 10, weight: 20 },
+    { label: "Free shipping", type: "shipping", value: 0, weight: 15 },
+    { label: "50 coins", type: "coins", value: 50, weight: 20 },
+    { label: "15% off", type: "discount", value: 15, weight: 10 },
+    { label: "Try again", type: "none", value: 0, weight: 5 },
+  ];
+
+  // 🎲 3. Weighted random selection
+  const totalWeight = prizes.reduce((sum, p) => sum + p.weight, 0);
+  let rand = Math.random() * totalWeight;
+
+  let prize;
+  for (let p of prizes) {
+    if (rand < p.weight) {
+      prize = p;
+      break;
+    }
+    rand -= p.weight;
+  }
+
+  // 💰 4. Apply reward
+  if (prize.type === "discount") {
+    const code = `LIVE${Math.floor(1000 + Math.random() * 9000)}`;
+
+    if (!req.user.coupons) req.user.coupons = [];
+
+    req.user.coupons.push({
+      code,
+      discountPct: prize.value,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    });
+
+    prize.code = code;
+  }
+
+  // 💰 5. Save cooldown + coupons (BEFORE awarding coins to avoid overwrite)
+  req.user.lastSpinAt = Date.now();
+  await req.user.save();
+
+  if (prize.type === "coins") {
+    const { award } = require("../services/coinsService");
+    await award(req.user._id, prize.value, "live_spin", {
+      sessionId: s._id,
+      prizeLabel: prize.label,
+    });
+  }
+
+  // 📡 6. Emit socket event
+  req.app.get("io")?.to(`live:${s.roomId}`).emit("live:spin", {
+    user: req.user._id,
+    prize,
+  });
+
+  // 📦 7. Send response
   res.json({ prize });
 });
 
 exports.joinGroupBuy = asyncHandler(async (req, res) => {
   const s = await LiveSession.findById(req.params.id);
   if (!s) throw ApiError.notFound();
-  if (!s.groupBuy.participants.some((u) => String(u) === String(req.user._id))) {
+  if (
+    !s.groupBuy.participants.some((u) => String(u) === String(req.user._id))
+  ) {
     s.groupBuy.participants.push(req.user._id);
   }
-  if (!s.groupBuy.unlocked && s.groupBuy.participants.length >= s.groupBuy.threshold) {
+  if (
+    !s.groupBuy.unlocked &&
+    s.groupBuy.participants.length >= s.groupBuy.threshold
+  ) {
     s.groupBuy.unlocked = true;
-    req.app.get('io')?.to(`live:${s.roomId}`).emit('live:groupBuyUnlocked', { discountPct: s.groupBuy.discountPct });
+    req.app
+      .get("io")
+      ?.to(`live:${s.roomId}`)
+      .emit("live:groupBuyUnlocked", { discountPct: s.groupBuy.discountPct });
   }
   await s.save();
   res.json({ groupBuy: s.groupBuy });
