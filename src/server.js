@@ -15,6 +15,10 @@ app.use("/api/agora", agoraRoutes);
 const liveRoutes = require("./routes/liveRoutes");
 app.use("/api/live", liveRoutes);
 
+// 🆕 Recommendation routes (HuggingFace AI model integration)
+const recommendationRoutes = require("./routes/recommendations");
+app.use("/api/recommendations", recommendationRoutes);
+
 (async () => {
   try {
     await connectDB();

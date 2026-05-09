@@ -25,6 +25,11 @@ const env = {
     appId: process.env.AGORA_APP_ID || '',
     appCert: process.env.AGORA_APP_CERTIFICATE|| '',
   },
+  // 🆕 Recommendation API (HuggingFace-deployed AI model)
+  recommendation: {
+    apiUrl: process.env.RECOMMENDATION_API_URL || '',
+    timeout: parseInt(process.env.RECOMMENDATION_API_TIMEOUT || '30000', 10),
+  },
 };
 
 env.isProd = env.nodeEnv === 'production';
@@ -46,6 +51,15 @@ env.isProd = env.nodeEnv === 'production';
       'Set a strong JWT_SECRET before deploying to production.'
     );
   }
+}
+
+// 🆕 Recommendation API warning (non-fatal, sirf warn karo)
+if (!env.recommendation.apiUrl) {
+  // eslint-disable-next-line no-console
+  console.error(
+    '[lokaly] WARN: RECOMMENDATION_API_URL is not set. ' +
+    'AI recommendations will be unavailable until configured.'
+  );
 }
 
 module.exports = env;
