@@ -92,7 +92,8 @@ exports.create = asyncHandler(async (req, res) => {
   const price = Number(body.price);
   if (!Number.isFinite(price) || price <= 0)
     throw ApiError.badRequest("price must be > 0");
-  const stock = body.stock === undefined ? 0 : Number(body.stock);
+  const stock =
+    body.stock === undefined || body.stock === "" ? 100 : Number(body.stock);
   if (!Number.isFinite(stock) || stock < 0)
     throw ApiError.badRequest("stock must be >= 0");
   const category =
