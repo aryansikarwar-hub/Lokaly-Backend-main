@@ -35,7 +35,7 @@ const productSchema = new mongoose.Schema(
     price: { type: Number, required: true, min: 0 },
     compareAtPrice: { type: Number, min: 0 },
     currency: { type: String, default: "INR" },
-    stock: { type: Number, default: 0, min: 0 },
+    stock: { type: Number, default: 100, min: 0 },
 
     images: [{ url: String, publicId: String }],
     videos: [{ url: String, publicId: String }],
