@@ -1,10 +1,11 @@
 const http = require("http");
+require("dotenv").config(); // ⬅️ SABSE PEHLE
+
 const app = require("./app");
 const env = require("./config/env");
 const { connectDB } = require("./config/db");
 const logger = require("./utils/logger");
 const { attachSockets } = require("./sockets");
-require("dotenv").config();
 
 const server = http.createServer(app);
 attachSockets(server, app);
