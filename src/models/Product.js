@@ -11,8 +11,8 @@ const sellerLocationSchema = new mongoose.Schema(
     city: { type: String, trim: true },
     pincode: { type: String, trim: true },
     geo: {
-      type: { type: String, enum: ["Point"], default: "Point" },
-      coordinates: { type: [Number], default: undefined }, // [lng, lat]
+      type: { type: String, enum: ["Point"] },
+      coordinates: { type: [Number], default: undefined },
     },
   },
   { _id: false },
@@ -51,7 +51,7 @@ const productSchema = new mongoose.Schema(
     flashDealEndsAt: { type: Date },
 
     // ─── HYPERLOCAL ADDITIONS ──────────────────────────────────────────
-    sellerLocation: { type: sellerLocationSchema, default: () => ({}) },
+    sellerLocation: { type: sellerLocationSchema, default: undefined },
     // How far this product can be delivered. Default 25km covers most metro
     // hyperlocal use-cases. Set to a large number (e.g. 5000) for nation-wide.
     deliveryRadiusKm: { type: Number, default: 25, min: 0, max: 5000 },
@@ -79,7 +79,7 @@ productSchema.index({ category: 1, price: 1 });
 productSchema.index({ seller: 1, isActive: 1 });
 // 2dsphere on the denormalized seller location — this is the magic index
 // that powers $geoNear on /api/hyperlocal/products/nearby.
-productSchema.index({ "sellerLocation.geo": "2dsphere" });
+productSchema.index({ "sellerLocation.geo": "2dsphere" }, { sparse: true });
 productSchema.index({ "sellerLocation.pincode": 1, isActive: 1 });
 
 productSchema.pre("save", function preSave(next) {

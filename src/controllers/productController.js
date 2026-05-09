@@ -1,4 +1,3 @@
- 
 const Product = require("../models/Product");
 const ApiError = require("../utils/ApiError");
 const asyncHandler = require("../utils/asyncHandler");
@@ -102,6 +101,18 @@ exports.create = asyncHandler(async (req, res) => {
   const tags = Array.isArray(body.tags)
     ? body.tags.map((t) => String(t).trim()).filter(Boolean)
     : [];
+
+  // Build images array from uploaded files or from body (URL strings)
+  const { toPublicUrl } = require("../middleware/upload");
+  let images = [];
+  if (req.files?.length) {
+    // Files uploaded via multipart/form-data
+    images = req.files.map((f) => toPublicUrl(f)).filter(Boolean);
+  } else if (Array.isArray(body.images)) {
+    // Images passed as URLs directly in JSON body
+    images = body.images;
+  }
+
   const payload = {
     ...body,
     title,
@@ -114,6 +125,7 @@ exports.create = asyncHandler(async (req, res) => {
   };
 
   delete payload._id;
+  delete payload.sellerLocation;
   const product = await Product.create(payload);
   res.status(201).json({ product });
 });
