@@ -12,7 +12,11 @@ const app = express();
 // Fix proxy issue FIRST
 app.set('trust proxy', 1);  // Trusts Render proxy[web:12]
 
-app.use(helmet());
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  }),
+);
 app.use(cors({ origin: env.clientUrl, credentials: true }));
 app.use(express.json({
   limit: '2mb',
@@ -52,7 +56,14 @@ app.get('/', (_req, res) => {
 });
 
 // Static uploads
-app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+app.use(
+  "/uploads",
+  (req, res, next) => {
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    next();
+  },
+  express.static(path.join(process.cwd(), "uploads")),
+);
 
 // ROUTES ✅
 app.use('/api/agora', require("./routes/agora"));

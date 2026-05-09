@@ -59,7 +59,6 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
   if (String(order.buyer) !== String(req.user._id)) throw ApiError.forbidden();
 
   // Idempotency guard: don't re-process an already-paid order.
-  // Without this, a duplicate verify call would deduct coins twice.
   if (order.payment?.paidAt) {
     return res.json({ ok: true, order, alreadyPaid: true });
   }
@@ -74,54 +73,66 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
       paidAt: new Date(),
       mode: "mock",
     };
-    order.addTimeline('paid', 'Mock payment accepted (no Razorpay keys configured)');
-    await order.save();
-    await createAndEmitNotification({
-      userId: order.buyer,
-      type: 'order',
-      message: `Payment received for order #${order._id}`,
-      orderId: order._id,
-    });
-    return res.json({ ok: true, order, mock: true });
+    order.addTimeline(
+      "paid",
+      "Mock payment accepted (no Razorpay keys configured)",
+    );
+  } else {
+    // Real Razorpay path: verify signature.
+    const expected = crypto
+      .createHmac("sha256", env.razorpay.keySecret)
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+      .digest("hex");
+
+    if (expected !== razorpay_signature) {
+      throw ApiError.badRequest("Invalid payment signature");
+    }
+
+    order.payment.paymentId = razorpay_payment_id;
+    order.payment.signature = razorpay_signature;
+    order.payment.paidAt = new Date();
+    order.addTimeline("paid", "Payment verified via Razorpay");
   }
 
   // ─── 2. Save the paid order BEFORE deducting coins ─────────────────────
-  // This way if coin deduction fails, the order is still marked paid (no money lost).
-  // We can fix coin issues later via admin tools rather than fail the whole payment.
+  // If coin deduction fails afterward, the order is still marked paid.
   await order.save();
 
-  // ─── 3. Deduct redeemed coins via ledger ───────────────────────────────
+  // ─── 3. Deduct redeemed coins via ledger (runs for BOTH mock and real) ─
   if (order.coinsRedeemed && order.coinsRedeemed > 0) {
     try {
       const User = require("../models/User");
       const { award } = require("../services/coinsService");
 
-      // Defensive re-check: did the user still have enough coins at payment time?
-      // (Prevents over-redemption if user redeemed across multiple pending orders.)
       const freshUser = await User.findById(order.buyer);
       const available = freshUser?.coins || 0;
       const toDeduct = Math.min(order.coinsRedeemed, available);
 
       if (toDeduct < order.coinsRedeemed) {
-        // User redeemed more than they currently have. Cap to available and log.
         // eslint-disable-next-line no-console
         console.warn(
           `[payments.verify] coin shortfall on order ${order._id}: ` +
             `requested ${order.coinsRedeemed}, available ${available}, deducting ${toDeduct}`,
         );
-        // Update the order to reflect actual deduction so refund logic stays accurate.
         order.coinsRedeemed = toDeduct;
         await order.save();
       }
 
       if (toDeduct > 0) {
+        // eslint-disable-next-line no-console
+        console.log(
+          `🪙 [payments.verify] deducting ${toDeduct} coins from user ${order.buyer} for order ${order._id}`,
+        );
         await award(order.buyer, -toDeduct, "order_redeem", {
           orderId: order._id,
           orderTotal: order.total,
         });
+        // eslint-disable-next-line no-console
+        console.log(
+          `🪙 [payments.verify] coin deduction successful for order ${order._id}`,
+        );
       }
     } catch (err) {
-      // Log loudly but don't fail the payment — order is already paid.
       // eslint-disable-next-line no-console
       console.error(
         `[payments.verify] coin deduction failed for order ${order._id}:`,
@@ -130,19 +141,15 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
     }
   }
 
-  order.payment.paymentId = razorpay_payment_id;
-  order.payment.signature = razorpay_signature;
-  order.payment.paidAt = new Date();
-  order.addTimeline('paid', 'Payment verified via Razorpay');
-  await order.save();
+  // ─── 4. Notify the buyer ───────────────────────────────────────────────
   await createAndEmitNotification({
     userId: order.buyer,
-    type: 'order',
+    type: "order",
     message: `Payment received for order #${order._id}`,
     orderId: order._id,
   });
 
-  // Clear cart once paid
+  // ─── 5. Clear cart once paid ───────────────────────────────────────────
   try {
     const Cart = require("../models/Cart");
     await Cart.updateOne({ user: order.buyer }, { $set: { items: [] } });
