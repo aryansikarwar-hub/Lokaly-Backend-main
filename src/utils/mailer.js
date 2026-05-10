@@ -1,42 +1,24 @@
-// Standalone mailer used by email-OTP flow.
-// Falls back to console logging in dev when SMTP is not configured.
+// mailer.js — Lokaly Email OTP Service
+// Uses Resend API (free, reliable, no SMTP headache)
+// Fallback: console log in dev if no API key set
 
-let _transporter = null;
+const { Resend } = require('resend');
 
-function getTransporter() {
-  if (_transporter) return _transporter;
-  if (!process.env.SMTP_HOST && !process.env.SMTP_USER) return null;
+// -----------------------------------------------
+// Resend client (lazy init)
+// -----------------------------------------------
+let _resend = null;
 
-  // eslint-disable-next-line global-require, import/no-unresolved, node/no-missing-require
-  const nodemailer = require('nodemailer');
-
-  // Gmail shortcut: if SMTP_USER ends with @gmail.com and no SMTP_HOST set
-  const isGmail =
-    !process.env.SMTP_HOST &&
-    /@gmail\.com$/i.test(process.env.SMTP_USER || '');
-
-  if (isGmail) {
-    _transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS, // Gmail App Password (16 chars)
-      },
-    });
-  } else {
-    _transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: parseInt(process.env.SMTP_PORT || '587', 10),
-      secure: process.env.SMTP_SECURE === 'true',
-      auth: process.env.SMTP_USER
-        ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
-        : undefined,
-    });
-  }
-
-  return _transporter;
+function getResendClient() {
+  if (_resend) return _resend;
+  if (!process.env.RESEND_API_KEY) return null;
+  _resend = new Resend(process.env.RESEND_API_KEY);
+  return _resend;
 }
 
+// -----------------------------------------------
+// Beautiful HTML Email Template
+// -----------------------------------------------
 function otpEmailHtml({ otp, name }) {
   return `
   <!DOCTYPE html>
@@ -52,7 +34,8 @@ function otpEmailHtml({ otp, name }) {
               Verify your email
             </h1>
             <p style="color:#6B5A82;font-size:14px;margin:0 0 24px 0;line-height:1.6;">
-              Hi ${name || 'there'}, use the code below to verify your email address. This code expires in <strong>10 minutes</strong>.
+              Hi ${name || 'there'}, use the code below to verify your email address.
+              This code expires in <strong>10 minutes</strong>.
             </p>
           </td></tr>
 
@@ -81,32 +64,45 @@ function otpEmailHtml({ otp, name }) {
   `;
 }
 
-/**
- * Send a 6-digit OTP to the user's email.
- * In dev (no SMTP configured), the OTP is logged to console so the flow continues.
- */
+// -----------------------------------------------
+// Send OTP Email via Resend
+// -----------------------------------------------
 async function sendOtpEmail({ to, otp, name }) {
-  // Always log in dev so testing works without SMTP
-  // eslint-disable-next-line no-console
+
+  // Always log in dev for debugging
   console.log(`[mailer] OTP for ${to}: ${otp}`);
 
-  const transporter = getTransporter();
-  if (!transporter) {
-    // No SMTP configured — dev mode, OTP is logged above
+  const resend = getResendClient();
+
+  // No API key set — dev mode, OTP only in console
+  if (!resend) {
+    console.warn('[mailer] RESEND_API_KEY not set — running in dev/console mode');
     return { dev: true };
   }
 
+  // FROM address:
+  // - Free Resend plan → use "onboarding@resend.dev"
+  // - Custom domain verified → use your own email
+  const fromAddress = process.env.SMTP_FROM || 'Lokaly <onboarding@resend.dev>';
+
   try {
-    const info = await transporter.sendMail({
-      from: process.env.SMTP_FROM || `"Lokaly" <${process.env.SMTP_USER || 'no-reply@lokaly.local'}>`,
-      to,
+    const { data, error } = await resend.emails.send({
+      from: fromAddress,
+      to: [to],
       subject: `Your Lokaly verification code: ${otp}`,
       text: `Your Lokaly verification code is: ${otp}\n\nThis code expires in 10 minutes.\nIf you didn't request this, you can safely ignore this email.`,
       html: otpEmailHtml({ otp, name }),
     });
-    return { sent: true, messageId: info.messageId };
+
+    if (error) {
+      console.error('[mailer] Resend error:', error);
+      throw new Error(error.message || 'Failed to send email');
+    }
+
+    console.log('[mailer] Email sent! ID:', data?.id);
+    return { sent: true, messageId: data?.id };
+
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.error('[mailer] send failed:', err.message);
     throw err;
   }
