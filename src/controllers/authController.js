@@ -60,9 +60,29 @@ function publicUser(user) {
 }
 
 exports.signup = asyncHandler(async (req, res) => {
-  const { name, email, password, role, shopName, shopCategory, referralCode } = req.body || {};
+  const {
+    name,
+    email,
+    password,
+    role,
+    shopName,
+    shopCategory,
+    referralCode,
+    // 🆕 Location fields
+    city,
+    state,
+    pincode,
+    country,
+  } = req.body || {};
+
   if (!name || !email || !password) throw ApiError.badRequest('name, email, password required');
   if (password.length < 6) throw ApiError.badRequest('password must be >= 6 chars');
+
+  // 🆕 Sellers must provide city — used in featured card & hyperlocal feed
+  const finalRole = ['buyer', 'seller'].includes(role) ? role : 'buyer';
+  if (finalRole === 'seller' && (!city || !city.trim())) {
+    throw ApiError.badRequest('city is required for sellers');
+  }
 
   const existing = await User.findOne({ email: email.toLowerCase() });
   if (existing) throw ApiError.conflict('Email already registered');
@@ -73,14 +93,22 @@ exports.signup = asyncHandler(async (req, res) => {
     if (inviter) referredBy = inviter._id;
   }
 
+  // 🆕 Build location object (only include keys actually provided)
+  const location = {};
+  if (city) location.city = city.trim();
+  if (state) location.state = state.trim();
+  if (pincode) location.pincode = pincode.trim();
+  if (country) location.country = country.trim();
+
   const verifyToken = generateVerifyToken();
   const user = await User.create({
     name,
     email: email.toLowerCase(),
     passwordHash: password,
-    role: ['buyer', 'seller'].includes(role) ? role : 'buyer',
-    shopName: role === 'seller' ? shopName : undefined,
-    shopCategory: role === 'seller' ? shopCategory : undefined,
+    role: finalRole,
+    shopName: finalRole === 'seller' ? shopName : undefined,
+    shopCategory: finalRole === 'seller' ? shopCategory : undefined,
+    location: Object.keys(location).length ? location : undefined,
     referredBy,
     isEmailVerified: false,
     emailVerificationToken: verifyToken,

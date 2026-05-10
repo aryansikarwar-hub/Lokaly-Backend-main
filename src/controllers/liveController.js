@@ -52,28 +52,36 @@ exports.getFeatured = asyncHandler(async (req, res) => {
   const all = [...liveStreams, ...scheduledStreams, ...endedStreams];
 
   // Shape response — flat structure for frontend
-  const streams = all.map((s) => ({
-    streamId: s._id,
-    roomId: s.roomId,
-    title: s.title,
-    description: s.description,
-    coverImage: s.coverImage,
-    category: s.category || s.host?.shopCategory || "General",
-    status: s.status,
-    startedAt: s.startedAt,
-    scheduledAt: s.scheduledAt,
-    viewers: s.stats?.peakViewers || 0,
-    host: {
-      _id: s.host?._id,
-      name: s.host?.name,
-      shopName: s.host?.shopName || s.title,
-      avatar: s.host?.avatar,
-      city: s.host?.location?.city || "India",
-      state: s.host?.location?.state,
-      isVerified: s.host?.isVerifiedSeller || false,
-      trustScore: s.host?.trustScore || 50,
-    },
-  }));
+  const streams = all.map((s) => {
+    // 🆕 Better city fallback: city → state → null (NOT "India")
+    const cityValue =
+      s.host?.location?.city?.trim() ||
+      s.host?.location?.state?.trim() ||
+      null;
+
+    return {
+      streamId: s._id,
+      roomId: s.roomId,
+      title: s.title,
+      description: s.description,
+      coverImage: s.coverImage,
+      category: s.category || s.host?.shopCategory || "General",
+      status: s.status,
+      startedAt: s.startedAt,
+      scheduledAt: s.scheduledAt,
+      viewers: s.stats?.peakViewers || 0,
+      host: {
+        _id: s.host?._id,
+        name: s.host?.name,
+        shopName: s.host?.shopName || s.title,
+        avatar: s.host?.avatar,
+        city: cityValue, // 🆕 null if seller hasn't set city — frontend falls back
+        state: s.host?.location?.state || null,
+        isVerified: s.host?.isVerifiedSeller || false,
+        trustScore: s.host?.trustScore || 50,
+      },
+    };
+  });
 
   res.json({
     success: true,
