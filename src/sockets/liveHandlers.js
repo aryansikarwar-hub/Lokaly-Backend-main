@@ -86,6 +86,52 @@ module.exports = function liveHandlers(io, socket) {
     io.to(`live:${roomId}`).emit("live:productPin", { productId });
   });
 
+  // ── Q&A: viewer asks a question ──────────────────────────
+  socket.on("live:qa:ask", async ({ roomId, question }) => {
+    if (!question?.trim() || !roomId) return;
+
+    let displayName = "Viewer";
+    if (socket.userId) {
+      try {
+        const user = await User.findById(socket.userId).select("name").lean();
+        if (user?.name) displayName = user.name;
+      } catch (_) {}
+    }
+
+    const qa = {
+      id: Date.now().toString(),
+      question: question.trim(),
+      askedBy: displayName,
+      userId: socket.userId || null,
+      answer: null,
+      answeredBy: null,
+      at: new Date(),
+    };
+
+    // Broadcast question to everyone in the room
+    io.to(`live:${roomId}`).emit("live:qa:new", qa);
+  });
+
+  // ── Q&A: seller answers a question ───────────────────────
+  socket.on("live:qa:answer", async ({ roomId, questionId, answer }) => {
+    if (!answer?.trim() || !roomId || !questionId) return;
+    if (!socket.userId) return;
+
+    let displayName = "Host";
+    try {
+      const user = await User.findById(socket.userId).select("name").lean();
+      if (user?.name) displayName = user.name;
+    } catch (_) {}
+
+    // Broadcast answer to everyone in the room
+    io.to(`live:${roomId}`).emit("live:qa:answered", {
+      questionId,
+      answer: answer.trim(),
+      answeredBy: displayName,
+      at: new Date(),
+    });
+  });
+
   socket.on("disconnecting", () => {
     for (const room of socket.rooms) {
       if (typeof room === "string" && room.startsWith("live:")) {
@@ -97,4 +143,4 @@ module.exports = function liveHandlers(io, socket) {
       }
     }
   });
-};
+};;
