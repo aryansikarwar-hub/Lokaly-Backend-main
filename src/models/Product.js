@@ -66,6 +66,15 @@ const productSchema = new mongoose.Schema(
         count: { type: Number, default: 0 },
       },
     ],
+
+    // Stockout history — written by pre-save hook below when stock crosses 0.
+    // Open intervals have closedAt:null. Capped at last 30 entries to bound size.
+    stockoutHistory: [
+      {
+        openedAt: { type: Date },
+        closedAt: { type: Date, default: null },
+      },
+    ],
     // ───────────────────────────────────────────────────────────────────
 
     embedding: { type: [Number], select: false },
@@ -82,16 +91,91 @@ productSchema.index({ seller: 1, isActive: 1 });
 productSchema.index({ "sellerLocation.geo": "2dsphere" }, { sparse: true });
 productSchema.index({ "sellerLocation.pincode": 1, isActive: 1 });
 
-productSchema.pre("save", function preSave(next) {
-  if (this.isModified("title") && !this.slug) {
-    this.slug = this.title
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "")
-      .slice(0, 80);
+productSchema.pre("save", async function preSave(next) {
+  try {
+    if (this.isModified("title") && !this.slug) {
+      this.slug = this.title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "")
+        .slice(0, 80);
+    }
+
+    // Stockout tracking — record when stock crosses the 0 boundary.
+    // We need the prior stock value: on a new doc there isn't one; on update
+    // we look at the cached priorDoc (set on init) and fall back to a quick
+    // findById if the doc was created in-memory and saved multiple times.
+    if (this.isModified("stock")) {
+      let prior = this.$__.priorStock;
+      if (prior === undefined && !this.isNew) {
+        const fresh = await this.constructor
+          .findById(this._id)
+          .select("stock")
+          .lean();
+        prior = fresh ? fresh.stock : undefined;
+      }
+      const now = this.stock;
+      const last = (this.stockoutHistory || []).slice(-1)[0];
+
+      if (prior !== undefined && prior > 0 && now === 0) {
+        this.stockoutHistory.push({ openedAt: new Date(), closedAt: null });
+      }
+      if (prior !== undefined && prior === 0 && now > 0 && last && !last.closedAt) {
+        last.closedAt = new Date();
+      }
+
+      if (this.stockoutHistory && this.stockoutHistory.length > 30) {
+        this.stockoutHistory = this.stockoutHistory.slice(-30);
+      }
+    }
+    next();
+  } catch (err) {
+    next(err);
   }
-  next();
 });
+
+// Cache prior stock on init so subsequent in-memory saves can compare
+// without an extra round-trip.
+productSchema.post("init", function captureOriginal() {
+  this.$__.priorStock = this.stock;
+});
+
+// After every successful save, refresh the cached prior so a chain of
+// saves on the same doc instance compares against the most recent committed value.
+productSchema.post("save", function rememberStock() {
+  this.$__.priorStock = this.stock;
+});
+
+/**
+ * Aggregate stockout frequency for a seller over the last `windowDays` days.
+ * Returns: { events, distinctProducts, longestOpenHours }
+ */
+productSchema.statics.stockoutFrequency = async function stockoutFrequency(
+  sellerId,
+  windowDays = 30,
+) {
+  const since = new Date(Date.now() - windowDays * 24 * 3600 * 1000);
+  const products = await this.find({ seller: sellerId })
+    .select("stockoutHistory title")
+    .lean();
+  let events = 0;
+  let longestOpenMs = 0;
+  const productsWithEvents = new Set();
+  for (const p of products) {
+    for (const ev of p.stockoutHistory || []) {
+      if (!ev.openedAt || new Date(ev.openedAt) < since) continue;
+      events += 1;
+      productsWithEvents.add(String(p._id));
+      const closed = ev.closedAt ? new Date(ev.closedAt) : new Date();
+      longestOpenMs = Math.max(longestOpenMs, closed - new Date(ev.openedAt));
+    }
+  }
+  return {
+    events,
+    distinctProducts: productsWithEvents.size,
+    longestOpenHours: Math.round(longestOpenMs / 3600000),
+  };
+};
 
 /**
  * Bulk-sync seller location onto all of a seller's products.

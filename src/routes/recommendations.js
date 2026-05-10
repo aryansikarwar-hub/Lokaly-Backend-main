@@ -8,63 +8,87 @@ const RECO_API = env.recommendation.apiUrl;
 const TIMEOUT = env.recommendation.timeout;
 
 /**
- * Helper - HuggingFace recommendation API ko call karta hai
+ * Normalize HF response → always return an array of products to the frontend.
+ * HF returns { product_found, recommendations: [...], searched_product? } or { error }.
  */
-async function fetchRecommendations(query, city) {
-  if (!RECO_API) {
-    throw new Error('Recommendation API URL not configured');
-  }
+function normalize(hfData) {
+  if (!hfData || typeof hfData !== 'object') return [];
+  if (Array.isArray(hfData)) return hfData;
+  if (Array.isArray(hfData.recommendations)) return hfData.recommendations;
+  return [];
+}
 
-  const response = await axios.post(
-    `${RECO_API}/recommend`,
-    { query, city },
-    {
-      timeout: TIMEOUT,
-      headers: { 'Content-Type': 'application/json' },
-    }
-  );
-  return response.data;
+async function callHF(path, body) {
+  if (!RECO_API) throw new Error('Recommendation API URL not configured');
+  const url = `${RECO_API.replace(/\/$/, '')}${path}`;
+  const res = await axios.post(url, body, {
+    timeout: TIMEOUT,
+    headers: { 'Content-Type': 'application/json' },
+  });
+  return res.data;
+}
+
+async function callHFGet(path, params) {
+  if (!RECO_API) throw new Error('Recommendation API URL not configured');
+  const url = `${RECO_API.replace(/\/$/, '')}${path}`;
+  const res = await axios.get(url, {
+    params,
+    timeout: TIMEOUT,
+    headers: { 'Content-Type': 'application/json' },
+  });
+  return res.data;
 }
 
 /**
  * POST /api/recommendations/search
- * User-driven search query
+ * User-driven search query.
+ * Returns: { success, results: Product[] }   (always an array — frontend-friendly)
  */
 router.post('/search', async (req, res) => {
   try {
     const { query, city } = req.body;
-
     if (!query || typeof query !== 'string' || query.trim() === '') {
-      return res.status(400).json({
-        success: false,
-        message: 'Query is required',
-      });
+      return res.status(400).json({ success: false, message: 'Query is required', results: [] });
     }
-
-    const results = await fetchRecommendations(query.trim(), city || null);
-    return res.json({ success: true, results });
+    const data = await callHF('/recommend', { query: query.trim(), city: city || null });
+    return res.json({
+      success: true,
+      results: normalize(data),
+      searched_product: data?.searched_product || null,
+      product_found: !!data?.product_found,
+    });
   } catch (err) {
     logger.warn('Recommendation search failed:', err.message);
-    return res.json({
-      success: false,
-      results: [],
-      message: 'Search temporarily unavailable',
-    });
+    return res.json({ success: false, results: [], message: 'Search temporarily unavailable' });
   }
 });
 
 /**
- * GET /api/recommendations/for-you
- * Home page - personalized recommendations
- * Query params: city, interest
+ * GET /api/recommendations/for-you?city=&interest=
+ * Home rail. Uses /popular when no interest is given (semantic search returns
+ * empty for generic queries like "popular local businesses"), otherwise /recommend.
  */
 router.get('/for-you', async (req, res) => {
   try {
     const city = req.query.city || (req.user && req.user.city) || null;
-    const query = req.query.interest || 'popular local businesses';
+    const interest = req.query.interest;
 
-    const results = await fetchRecommendations(query, city);
-    return res.json({ success: true, recommendations: results });
+    let data;
+    if (interest && String(interest).trim()) {
+      data = await callHF('/recommend', { query: String(interest).trim(), city });
+    } else {
+      // /popular endpoint returns top-N without similarity threshold
+      try {
+        data = await callHFGet('/popular', { city, limit: 8 });
+      } catch (e) {
+        // Backwards compat: old HF deploys without /popular — fall back to a
+        // common category that the corpus reliably has.
+        logger.warn('Popular endpoint unavailable, falling back to /recommend:', e.message);
+        data = await callHF('/recommend', { query: 'saree', city });
+      }
+    }
+
+    return res.json({ success: true, recommendations: normalize(data) });
   } catch (err) {
     logger.warn('Recommendation for-you failed:', err.message);
     return res.json({
@@ -77,46 +101,38 @@ router.get('/for-you', async (req, res) => {
 
 /**
  * GET /api/recommendations/similar/:productId
- * Product detail page - similar items
+ * Product detail page — similar items. Looks the product up locally,
+ * then asks HF for similar items based on its category/title.
  */
 router.get('/similar/:productId', async (req, res) => {
   try {
     const { productId } = req.params;
-
-    // Apne database se product fetch karke uska name/category extract karo
-    // ⚠️ Path adjust karna agar tumhara model alag jagah hai
     const Product = require('../models/Product');
     const product = await Product.findById(productId).lean();
 
     if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: 'Product not found',
-      });
+      return res.status(404).json({ success: false, message: 'Product not found', similar: [] });
     }
 
-    const query = product.category || product.name || '';
-    const city = product.city || req.query.city || null;
+    const query = product.category || product.title || '';
+    const city =
+      (product.sellerLocation && product.sellerLocation.city) ||
+      product.city_name ||
+      product.city ||
+      req.query.city ||
+      null;
 
-    if (!query) {
-      return res.json({ success: true, similar: [] });
-    }
+    if (!query) return res.json({ success: true, similar: [] });
 
-    const results = await fetchRecommendations(query, city);
+    const data = await callHF('/recommend', { query, city });
+    const list = normalize(data).filter(
+      (item) => String(item._id || item.id || '') !== String(productId),
+    );
 
-    // Khud product ko similar list se nikal do
-    const filtered = Array.isArray(results)
-      ? results.filter((item) => String(item.id) !== String(productId))
-      : [];
-
-    return res.json({ success: true, similar: filtered });
+    return res.json({ success: true, similar: list });
   } catch (err) {
     logger.warn('Recommendation similar failed:', err.message);
-    return res.json({
-      success: false,
-      similar: [],
-      message: 'Similar items temporarily unavailable',
-    });
+    return res.json({ success: false, similar: [], message: 'Similar items temporarily unavailable' });
   }
 });
 
