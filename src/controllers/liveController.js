@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const LiveSession = require("../models/LiveSession");
 const ApiError = require("../utils/ApiError");
 const asyncHandler = require("../utils/asyncHandler");
+const { createAndEmitNotification } = require("../services/notificationService");
 
 // ────────────────────────────────────────────────────────
 // FEATURED STREAMS — for homepage card carousel
@@ -51,28 +52,36 @@ exports.getFeatured = asyncHandler(async (req, res) => {
   const all = [...liveStreams, ...scheduledStreams, ...endedStreams];
 
   // Shape response — flat structure for frontend
-  const streams = all.map((s) => ({
-    streamId: s._id,
-    roomId: s.roomId,
-    title: s.title,
-    description: s.description,
-    coverImage: s.coverImage,
-    category: s.category || s.host?.shopCategory || "General",
-    status: s.status,
-    startedAt: s.startedAt,
-    scheduledAt: s.scheduledAt,
-    viewers: s.stats?.peakViewers || 0,
-    host: {
-      _id: s.host?._id,
-      name: s.host?.name,
-      shopName: s.host?.shopName || s.title,
-      avatar: s.host?.avatar,
-      city: s.host?.location?.city || "India",
-      state: s.host?.location?.state,
-      isVerified: s.host?.isVerifiedSeller || false,
-      trustScore: s.host?.trustScore || 50,
-    },
-  }));
+  const streams = all.map((s) => {
+    // 🆕 Better city fallback: city → state → null (NOT "India")
+    const cityValue =
+      s.host?.location?.city?.trim() ||
+      s.host?.location?.state?.trim() ||
+      null;
+
+    return {
+      streamId: s._id,
+      roomId: s.roomId,
+      title: s.title,
+      description: s.description,
+      coverImage: s.coverImage,
+      category: s.category || s.host?.shopCategory || "General",
+      status: s.status,
+      startedAt: s.startedAt,
+      scheduledAt: s.scheduledAt,
+      viewers: s.stats?.peakViewers || 0,
+      host: {
+        _id: s.host?._id,
+        name: s.host?.name,
+        shopName: s.host?.shopName || s.title,
+        avatar: s.host?.avatar,
+        city: cityValue, // 🆕 null if seller hasn't set city — frontend falls back
+        state: s.host?.location?.state || null,
+        isVerified: s.host?.isVerifiedSeller || false,
+        trustScore: s.host?.trustScore || 50,
+      },
+    };
+  });
 
   res.json({
     success: true,
@@ -159,6 +168,25 @@ exports.start = asyncHandler(async (req, res) => {
   await s.save();
 
   req.app.get("io")?.emit("live:started", { id: s._id, roomId: s.roomId });
+  const targetUsers = [
+    ...new Set([
+      ...s.coHosts.map((id) => String(id)),
+      ...(s.groupBuy?.participants || []).map((id) => String(id)),
+    ]),
+  ].filter((id) => id !== String(req.user._id));
+  await Promise.all(
+    targetUsers.map((uid) =>
+      createAndEmitNotification({
+        userId: uid,
+        type: "live_started",
+        message: `${s.title} just went live`,
+        sender: req.user._id,
+        liveSessionId: s._id,
+        dedupeKey: `live:${s._id}:started:${uid}`,
+        meta: { roomId: s.roomId, title: s.title },
+      })
+    )
+  );
   res.json({ session: s });
 });
 
