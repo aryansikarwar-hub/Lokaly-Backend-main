@@ -68,32 +68,42 @@ exports.signup = asyncHandler(async (req, res) => {
     shopName,
     shopCategory,
     referralCode,
-    // 🆕 Location fields
+    // Location fields
     city,
     state,
     pincode,
     country,
   } = req.body || {};
 
-  if (!name || !email || !password) throw ApiError.badRequest('name, email, password required');
-  if (password.length < 6) throw ApiError.badRequest('password must be >= 6 chars');
+  if (!name || !email || !password)
+    throw ApiError.badRequest("name, email, password required");
+  if (password.length < 6)
+    throw ApiError.badRequest("password must be >= 6 chars");
 
-  // 🆕 Sellers must provide city — used in featured card & hyperlocal feed
-  const finalRole = ['buyer', 'seller'].includes(role) ? role : 'buyer';
-  if (finalRole === 'seller' && (!city || !city.trim())) {
-    throw ApiError.badRequest('city is required for sellers');
+  // Sellers must provide city — used in featured card & hyperlocal feed
+  const finalRole = ["buyer", "seller"].includes(role) ? role : "buyer";
+  if (finalRole === "seller" && (!city || !city.trim())) {
+    throw ApiError.badRequest("city is required for sellers");
   }
 
   const existing = await User.findOne({ email: email.toLowerCase() });
-  if (existing) throw ApiError.conflict('Email already registered');
+  if (existing) throw ApiError.conflict("Email already registered");
 
+  // ───── Referral code handling ─────
+  // Validate the code up-front. If it's provided but invalid, fail fast
+  // so the user can correct it (instead of silently swallowing it).
   let referredBy = null;
-  if (referralCode) {
-    const inviter = await User.findOne({ referralCode: referralCode.toUpperCase() });
-    if (inviter) referredBy = inviter._id;
+  let inviter = null;
+  if (referralCode && referralCode.trim()) {
+    const code = referralCode.trim().toUpperCase();
+    inviter = await User.findOne({ referralCode: code });
+    if (!inviter) {
+      throw ApiError.badRequest("Invalid referral code");
+    }
+    referredBy = inviter._id;
   }
 
-  // 🆕 Build location object (only include keys actually provided)
+  // Build location object (only include keys actually provided)
   const location = {};
   if (city) location.city = city.trim();
   if (state) location.state = state.trim();
@@ -106,8 +116,8 @@ exports.signup = asyncHandler(async (req, res) => {
     email: email.toLowerCase(),
     passwordHash: password,
     role: finalRole,
-    shopName: finalRole === 'seller' ? shopName : undefined,
-    shopCategory: finalRole === 'seller' ? shopCategory : undefined,
+    shopName: finalRole === "seller" ? shopName : undefined,
+    shopCategory: finalRole === "seller" ? shopCategory : undefined,
     location: Object.keys(location).length ? location : undefined,
     referredBy,
     isEmailVerified: false,
@@ -115,20 +125,65 @@ exports.signup = asyncHandler(async (req, res) => {
     emailVerificationExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
   });
 
+  // ───── Award referral coins ─────
+  // Rule: +1 coin to inviter, +1 coin to the new user.
+  // "One-time use per user" is naturally enforced because `referredBy`
+  // is set exactly once at signup — a user can never re-trigger this.
+  if (inviter) {
+  const coinsService = require("../services/coinsService");
+
+  // Inviter award
+  try {
+    console.log("[auth] Awarding inviter:", inviter._id.toString());
+    const balance = await coinsService.award(inviter._id, 1, "referral_bonus", {
+      referredUserId: user._id,
+      referredUserName: user.name,
+      referredUserEmail: user.email,
+    });
+    console.log("[auth] Inviter awarded. New balance:", balance);
+  } catch (err) {
+    console.error("[auth] INVITER award failed:", err);
+  }
+
+  // New user award
+  try {
+    console.log("[auth] Awarding new user:", user._id.toString());
+    const balance = await coinsService.award(user._id, 1, "referral_signup", {
+      inviterId: inviter._id,
+      inviterName: inviter.name,
+      referralCode: inviter.referralCode,
+    });
+    console.log("[auth] New user awarded. New balance:", balance);
+
+    const refreshed = await User.findById(user._id).select("coins");
+    user.coins = refreshed.coins;
+  }  
+    catch (err) {
+  console.error("[auth] referral coin grant failed:", err);  // log full error
+  console.error("[auth] error stack:", err.stack);
+}
+
+    
+  }
   await sendVerifyEmail(user.email, buildVerifyUrl(verifyToken));
 
   // If a seller signs up with a referral code, create the referral tracking row.
-  if (referredBy && user.role === 'seller') {
+  // (kept as-is from your original code)
+  if (referredBy && user.role === "seller") {
     try {
-      const { registerReferral } = require('../services/referralService');
-      await registerReferral({ referrerId: referredBy, referredSellerId: user._id });
-    } catch (_) { /* non-fatal */ }
+      const { registerReferral } = require("../services/referralService");
+      await registerReferral({
+        referrerId: referredBy,
+        referredSellerId: user._id,
+      });
+    } catch (_) {
+      /* non-fatal */
+    }
   }
 
   const token = signToken(user);
   res.status(201).json({ token, user: publicUser(user) });
 });
-
 exports.login = asyncHandler(async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) throw ApiError.badRequest('email and password required');
