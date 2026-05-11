@@ -414,6 +414,9 @@ exports.joinGroupBuy = asyncHandler(async (req, res) => {
     s.groupBuy.participants.push(req.user._id);
   }
 
+  // Unlock the discount UI as soon as `threshold` people show intent.
+  // NOTE: coins are awarded on actual purchase (see services/groupBuyService.js
+  // hooked from paymentController.verify) — NOT here.
   if (
     !s.groupBuy.unlocked &&
     s.groupBuy.participants.length >= s.groupBuy.threshold
