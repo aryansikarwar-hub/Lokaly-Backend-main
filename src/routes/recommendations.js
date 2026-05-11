@@ -9,7 +9,6 @@ const TIMEOUT = env.recommendation.timeout;
 
 /**
  * Normalize HF response → always return an array of products to the frontend.
- * HF returns { product_found, recommendations: [...], searched_product? } or { error }.
  */
 function normalize(hfData) {
   if (!hfData || typeof hfData !== 'object') return [];
@@ -40,9 +39,58 @@ async function callHFGet(path, params) {
 }
 
 /**
+ * ✅ FIX: HF model ke paas images nahi hoti — MongoDB se real images attach karo
+ * HF results mein _id hota hai → Product.find() se images, seller info fetch karo
+ */
+async function enrichWithImages(items) {
+  if (!items || items.length === 0) return items;
+
+  try {
+    const Product = require('../models/Product');
+
+    // Valid MongoDB ObjectIds nikalo
+    const ids = items
+      .map((p) => p._id || p.id)
+      .filter(Boolean);
+
+    if (ids.length === 0) return items;
+
+    // Ek hi query mein sab products fetch karo — images aur seller info ke saath
+    const dbProducts = await Product.find({ _id: { $in: ids } })
+      .populate('seller', 'shopName isVerifiedSeller')
+      .select('_id images seller title price rating reviewCount')
+      .lean();
+
+    // _id → product map banao quick lookup ke liye
+    const dbMap = {};
+    dbProducts.forEach((p) => {
+      dbMap[String(p._id)] = p;
+    });
+
+    // HF results ko DB images se enrich karo
+    return items.map((item) => {
+      const itemId = String(item._id || item.id || '');
+      const dbProduct = dbMap[itemId];
+
+      if (!dbProduct) return item; // DB mein nahi mila — HF data as-is
+
+      return {
+        ...item,
+        // ✅ Real images DB se — yahi fix hai
+        image: dbProduct.images?.[0]?.url || item.image || '',
+        images: dbProduct.images || [],
+        // Seller info bhi DB se (zyada accurate)
+        seller: dbProduct.seller || item.seller,
+      };
+    });
+  } catch (err) {
+    logger.warn('Image enrichment failed (non-fatal):', err.message);
+    return items; // Fail gracefully — bina images ke bhi results dikhao
+  }
+}
+
+/**
  * POST /api/recommendations/search
- * User-driven search query.
- * Returns: { success, results: Product[] }   (always an array — frontend-friendly)
  */
 router.post('/search', async (req, res) => {
   try {
@@ -50,10 +98,16 @@ router.post('/search', async (req, res) => {
     if (!query || typeof query !== 'string' || query.trim() === '') {
       return res.status(400).json({ success: false, message: 'Query is required', results: [] });
     }
+
     const data = await callHF('/recommend', { query: query.trim(), city: city || null });
+    const raw = normalize(data);
+
+    // ✅ Images attach karo MongoDB se
+    const results = await enrichWithImages(raw);
+
     return res.json({
       success: true,
-      results: normalize(data),
+      results,
       searched_product: data?.searched_product || null,
       product_found: !!data?.product_found,
     });
@@ -64,9 +118,7 @@ router.post('/search', async (req, res) => {
 });
 
 /**
- * GET /api/recommendations/for-you?city=&interest=
- * Home rail. Uses /popular when no interest is given (semantic search returns
- * empty for generic queries like "popular local businesses"), otherwise /recommend.
+ * GET /api/recommendations/for-you
  */
 router.get('/for-you', async (req, res) => {
   try {
@@ -77,18 +129,20 @@ router.get('/for-you', async (req, res) => {
     if (interest && String(interest).trim()) {
       data = await callHF('/recommend', { query: String(interest).trim(), city });
     } else {
-      // /popular endpoint returns top-N without similarity threshold
       try {
         data = await callHFGet('/popular', { city, limit: 8 });
       } catch (e) {
-        // Backwards compat: old HF deploys without /popular — fall back to a
-        // common category that the corpus reliably has.
         logger.warn('Popular endpoint unavailable, falling back to /recommend:', e.message);
         data = await callHF('/recommend', { query: 'saree', city });
       }
     }
 
-    return res.json({ success: true, recommendations: normalize(data) });
+    const raw = normalize(data);
+
+    // ✅ Images attach karo MongoDB se
+    const enriched = await enrichWithImages(raw);
+
+    return res.json({ success: true, recommendations: enriched });
   } catch (err) {
     logger.warn('Recommendation for-you failed:', err.message);
     return res.json({
@@ -101,8 +155,6 @@ router.get('/for-you', async (req, res) => {
 
 /**
  * GET /api/recommendations/similar/:productId
- * Product detail page — similar items. Looks the product up locally,
- * then asks HF for similar items based on its category/title.
  */
 router.get('/similar/:productId', async (req, res) => {
   try {
@@ -125,11 +177,14 @@ router.get('/similar/:productId', async (req, res) => {
     if (!query) return res.json({ success: true, similar: [] });
 
     const data = await callHF('/recommend', { query, city });
-    const list = normalize(data).filter(
+    const raw = normalize(data).filter(
       (item) => String(item._id || item.id || '') !== String(productId),
     );
 
-    return res.json({ success: true, similar: list });
+    // ✅ Images attach karo MongoDB se
+    const similar = await enrichWithImages(raw);
+
+    return res.json({ success: true, similar });
   } catch (err) {
     logger.warn('Recommendation similar failed:', err.message);
     return res.json({ success: false, similar: [], message: 'Similar items temporarily unavailable' });
