@@ -1,8 +1,9 @@
-const Order = require("../models/Order");
-const Cart = require("../models/Cart");
-const Product = require("../models/Product");
-const ApiError = require("../utils/ApiError");
-const asyncHandler = require("../utils/asyncHandler");
+const Order = require('../models/Order');
+const Cart = require('../models/Cart');
+const Product = require('../models/Product');
+const ApiError = require('../utils/ApiError');
+const asyncHandler = require('../utils/asyncHandler');
+const { createAndEmitNotification } = require('../services/notificationService');
 
 exports.createFromCart = asyncHandler(async (req, res) => {
   const { address, coinsToRedeem = 0 } = req.body || {};
@@ -208,5 +209,28 @@ exports.updateStatus = asyncHandler(async (req, res) => {
   }
 
   await order.save();
+  if (prevStatus !== status) {
+    const sellerIds = [...new Set(order.items.map((item) => String(item.seller)))];
+    await Promise.all([
+      createAndEmitNotification({
+        userId: order.buyer,
+        type: 'order_status',
+        message: `Your order #${order._id} is now ${status.replaceAll('_', ' ')}`,
+        orderId: order._id,
+        dedupeKey: `order:${order._id}:status:${status}:buyer`,
+        meta: { status, previousStatus: prevStatus },
+      }),
+      ...sellerIds.map((sellerId) =>
+        createAndEmitNotification({
+          userId: sellerId,
+          type: 'order_status',
+          message: `Order #${order._id} updated to ${status.replaceAll('_', ' ')}`,
+          orderId: order._id,
+          dedupeKey: `order:${order._id}:status:${status}:seller:${sellerId}`,
+          meta: { status, previousStatus: prevStatus },
+        })
+      ),
+    ]);
+  }
   res.json({ order });
 });

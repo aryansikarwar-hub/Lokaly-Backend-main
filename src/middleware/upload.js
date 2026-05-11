@@ -43,9 +43,11 @@ const upload = multer({
 
 function toPublicUrl(file) {
   if (!file) return null;
-  if (file.path && file.path.startsWith('http')) {
+  // Cloudinary returns a full https URL — use it directly
+  if (file.path && file.path.startsWith("http")) {
     return { url: file.path, publicId: file.filename };
   }
+  // Local dev — return relative path only, frontend absolutizes it
   return { url: `/uploads/${file.filename}`, publicId: file.filename };
 }
 

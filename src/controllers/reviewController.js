@@ -84,6 +84,7 @@ exports.create = asyncHandler(async (req, res) => {
     }
   } catch (_) { /* non-fatal */ }
 
+  await review.populate("buyer", "name avatar trustScore");
   res.status(201).json({ review });
 });
 
@@ -111,4 +112,49 @@ exports.voteHelpful = asyncHandler(async (req, res) => {
   else review.helpfulVotes.push(req.user._id);
   await review.save();
   res.json({ helpful: idx < 0, count: review.helpfulVotes.length });
+});
+
+exports.update = asyncHandler(async (req, res) => {
+  const review = await Review.findById(req.params.id);
+  if (!review) throw ApiError.notFound("Review not found");
+  if (String(review.buyer) !== String(req.user._id))
+    throw ApiError.forbidden("Not your review");
+
+  const { rating, text, images } = req.body || {};
+  if (rating !== undefined) {
+    if (rating < 1 || rating > 5)
+      throw ApiError.badRequest("rating must be 1-5");
+    review.rating = rating;
+  }
+  if (text !== undefined) review.text = text;
+  if (images !== undefined) review.images = images;
+
+  // Re-run sentiment if text changed
+  if (text !== undefined) {
+    try {
+      const { sentimentOf } = require("./mlController");
+      review.sentiment = await sentimentOf(text);
+    } catch (_) {}
+  }
+
+  await review.save();
+  await recomputeProductRating(review.product);
+
+  res.json({ review });
+});
+
+exports.remove = asyncHandler(async (req, res) => {
+  const review = await Review.findById(req.params.id);
+  if (!review) throw ApiError.notFound("Review not found");
+  if (
+    String(review.buyer) !== String(req.user._id) &&
+    req.user.role !== "admin"
+  )
+    throw ApiError.forbidden("Not your review");
+
+  await review.deleteOne();
+  await recomputeProductRating(review.product);
+  computeSellerTrust(review.seller).catch(() => null);
+
+  res.json({ ok: true });
 });

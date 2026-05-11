@@ -2,6 +2,7 @@ const Conversation = require('../models/Conversation');
 const Message = require('../models/Message');
 const ApiError = require('../utils/ApiError');
 const asyncHandler = require('../utils/asyncHandler');
+const { createAndEmitNotification } = require('../services/notificationService');
 
 exports.listConversations = asyncHandler(async (req, res) => {
   const convos = await Conversation.find({ participants: req.user._id })
@@ -94,6 +95,15 @@ exports.send = asyncHandler(async (req, res) => {
   // Socket emit is handled by the sockets layer (T11); this REST path is kept for fallbacks.
   const io = req.app.get('io');
   io?.to(`user:${toUser}`).emit('chat:message', msg);
+  await createAndEmitNotification({
+    userId: toUser,
+    type: 'chat_message',
+    message: `New message: ${(text || '[attachment]').slice(0, 100)}`,
+    sender: req.user._id,
+    conversationId: convo._id,
+    dedupeKey: `chat:${msg._id}`,
+    meta: { messageId: String(msg._id) },
+  });
   if (moderation && moderation.flagged) {
     io?.to(`user:${toUser}`).emit('chat:flagged', {
       messageId: msg._id,
