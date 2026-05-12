@@ -1,15 +1,3 @@
-// routes/upload.js
-const express = require("express");
-const path = require("path");
-// backend/routes/uploadRoutes.js
-// =====================================================
-// Cloudinary-based upload route
-// - Single:   POST /api/upload         (field: "file")
-// - Multiple: POST /api/upload/multi   (field: "files")
-// - Uses memory storage → streams to Cloudinary
-// - Returns permanent CDN URLs (NOT ephemeral local paths)
-// =====================================================
-
 const express = require("express");
 const multer = require("multer");
 const streamifier = require("streamifier");
