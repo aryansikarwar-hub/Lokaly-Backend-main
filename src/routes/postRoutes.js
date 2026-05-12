@@ -5,6 +5,7 @@ const { requireAuth } = require('../middleware/auth');
 router.get('/', ctrl.feed);
 router.post('/', requireAuth, ctrl.create);
 router.get('/:id', ctrl.getById);
+router.patch('/:id', requireAuth, ctrl.update);   // ✅ Edit post/reel caption
 router.post('/:id/like', requireAuth, ctrl.like);
 router.post('/:id/comment', requireAuth, ctrl.comment);
 router.post('/:id/share', ctrl.share);
