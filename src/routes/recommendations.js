@@ -1,5 +1,6 @@
 const express = require('express');
 const axios = require('axios');
+const mongoose = require('mongoose');
 const router = express.Router();
 const env = require('../config/env');
 const logger = require('../utils/logger');
@@ -39,8 +40,8 @@ async function callHFGet(path, params) {
 }
 
 /**
- * ✅ FIX: HF model ke paas images nahi hoti — MongoDB se real images attach karo
- * HF results mein _id hota hai → Product.find() se images, seller info fetch karo
+ * HF model ke paas images nahi hoti — MongoDB se real images attach karo
+ * aur sirf wahi results return karo jinka product DB mein hai (taaki click pe 404 na aaye).
  */
 async function enrichWithImages(items) {
   if (!items || items.length === 0) return items;
@@ -48,44 +49,45 @@ async function enrichWithImages(items) {
   try {
     const Product = require('../models/Product');
 
-    // Valid MongoDB ObjectIds nikalo
+    // Sirf valid MongoDB ObjectIds rakho (HF kabhi custom string ID bhi return karta hai)
     const ids = items
-      .map((p) => p._id || p.id)
-      .filter(Boolean);
+      .map((p) => String(p._id || p.id || ''))
+      .filter((id) => mongoose.Types.ObjectId.isValid(id));
 
-    if (ids.length === 0) return items;
+    if (ids.length === 0) return [];
 
-    // Ek hi query mein sab products fetch karo — images aur seller info ke saath
     const dbProducts = await Product.find({ _id: { $in: ids } })
       .populate('seller', 'shopName isVerifiedSeller')
-      .select('_id images seller title price rating reviewCount')
+      .select('_id title price images seller rating reviewCount category')
       .lean();
 
-    // _id → product map banao quick lookup ke liye
     const dbMap = {};
     dbProducts.forEach((p) => {
       dbMap[String(p._id)] = p;
     });
 
-    // HF results ko DB images se enrich karo
-    return items.map((item) => {
-      const itemId = String(item._id || item.id || '');
-      const dbProduct = dbMap[itemId];
+    // Drop kar do woh items jinka koi real DB product nahi — click karte hi 404 hoga
+    return items
+      .map((item) => {
+        const itemId = String(item._id || item.id || '');
+        const dbProduct = dbMap[itemId];
+        if (!dbProduct) return null;
 
-      if (!dbProduct) return item; // DB mein nahi mila — HF data as-is
-
-      return {
-        ...item,
-        // ✅ Real images DB se — yahi fix hai
-        image: dbProduct.images?.[0]?.url || item.image || '',
-        images: dbProduct.images || [],
-        // Seller info bhi DB se (zyada accurate)
-        seller: dbProduct.seller || item.seller,
-      };
-    });
+        return {
+          ...item,
+          _id: String(dbProduct._id),
+          image: dbProduct.images?.[0]?.url || item.image || '',
+          images: dbProduct.images || [],
+          seller: dbProduct.seller || item.seller,
+          title: item.title || dbProduct.title,
+          price: typeof item.price === 'number' ? item.price : dbProduct.price,
+          category: item.category || dbProduct.category,
+        };
+      })
+      .filter(Boolean);
   } catch (err) {
     logger.warn('Image enrichment failed (non-fatal):', err.message);
-    return items; // Fail gracefully — bina images ke bhi results dikhao
+    return items.filter((p) => mongoose.Types.ObjectId.isValid(String(p._id || p.id || '')));
   }
 }
 

@@ -37,7 +37,7 @@ const liveSessionSchema = new mongoose.Schema(
     coHosts: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
     title: { type: String, required: true, maxlength: 120 },
     description: { type: String, maxlength: 1000, default: "" },
-    coverImage: String,
+    coverImage: { type: String, default: "" },
     category: String,
 
     status: {
@@ -67,12 +67,18 @@ const liveSessionSchema = new mongoose.Schema(
       salesAmount: { type: Number, default: 0 },
     },
 
-    // Group-buying goal: unlock groupBuyDiscountPct when groupBuyThreshold buyers add cart
+    // Group-buying goal: unlock groupBuyDiscountPct + coin rewards when
+    // `threshold` distinct buyers complete paid orders against this session.
+    //   participants = users who clicked "Join Group Buy" (intent, unlocks the UI)
+    //   buyers       = users who actually paid for an order in this session
+    //   coinsAwarded = true once we've distributed coins (idempotency guard)
     groupBuy: {
       threshold: { type: Number, default: 0 },
       discountPct: { type: Number, default: 0 },
       participants: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+      buyers: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
       unlocked: { type: Boolean, default: false },
+      coinsAwarded: { type: Boolean, default: false },
     },
 
     spins: [

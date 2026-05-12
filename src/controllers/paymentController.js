@@ -141,6 +141,34 @@ exports.verifyPayment = asyncHandler(async (req, res) => {
     }
   }
 
+  // ─── 3b. Group-buy reward (paid order on a live session) ───────────────
+  // If the threshold of distinct buyers is reached, every buyer gets 2 coins.
+  if (order.liveSessionId) {
+    try {
+      const { recordGroupBuyPurchase } = require("../services/groupBuyService");
+      const result = await recordGroupBuyPurchase({
+        liveSessionId: order.liveSessionId,
+        buyerId: order.buyer,
+        orderId: order._id,
+      });
+      if (result.coinsAwarded) {
+        req.app
+          ?.get("io")
+          ?.to(`live:${order.liveSessionId}`)
+          .emit("live:groupBuyCoinsAwarded", {
+            coinsPerBuyer: result.coinsPerBuyer,
+            buyerCount: result.buyerCount,
+          });
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[payments.verify] group-buy reward failed for order ${order._id}:`,
+        err.message,
+      );
+    }
+  }
+
   // ─── 4. Notify the buyer ───────────────────────────────────────────────
   await createAndEmitNotification({
     userId: order.buyer,

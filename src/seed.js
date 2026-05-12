@@ -448,7 +448,7 @@ async function seed() {
       streamKey: 'demo-key-' + i,
       roomId: `live_demo_${i}`,
       featuredProducts: featured.map((f) => f._id),
-      groupBuy: { threshold: 10, discountPct: 15, participants: [], unlocked: false },
+      groupBuy: { threshold: 2, discountPct: 15, participants: [], unlocked: false },
       stats: { peakViewers: rand(1200), totalViewers: rand(5000), reactions: rand(800), chatMessages: rand(300) },
     });
   }

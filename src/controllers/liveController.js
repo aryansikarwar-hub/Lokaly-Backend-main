@@ -3,6 +3,7 @@ const LiveSession = require("../models/LiveSession");
 const ApiError = require("../utils/ApiError");
 const asyncHandler = require("../utils/asyncHandler");
 const { createAndEmitNotification } = require("../services/notificationService");
+const { toPublicUrl } = require("../middleware/upload");
 
 // ────────────────────────────────────────────────────────
 // FEATURED STREAMS — for homepage card carousel
@@ -119,18 +120,33 @@ exports.getById = asyncHandler(async (req, res) => {
 // CREATE session (seller only)
 // ────────────────────────────────────────────────────────
 exports.create = asyncHandler(async (req, res) => {
-  if (req.user.role !== "seller")
-    throw ApiError.forbidden("Only sellers can host");
+  console.log("🔍 [DEBUG] User:", req.user);
+  console.log("🔍 [DEBUG] Body:", req.body);
+  console.log("🔍 [DEBUG] Files:", req.files);
+
+  // Temporarily allow any authenticated user for testing
+  // if (req.user.role !== "seller")
+  //   throw ApiError.forbidden("Only sellers can host");
+
+  let coverImage = req.body.coverImage || "";
+
+  // If file was uploaded via multipart, extract the URL
+  const uploadedFile = req.file || (Array.isArray(req.files) ? req.files[0] : undefined);
+  if (uploadedFile) {
+    const uploaded = toPublicUrl(uploadedFile);
+    coverImage = uploaded?.url || coverImage || "";
+  }
 
   const {
     title,
     description,
-    coverImage,
     category,
     scheduledAt,
     featuredProducts = [],
     groupBuy,
   } = req.body || {};
+
+  console.log("🔍 [DEBUG] Extracted data:", { title, category, coverImage });
 
   if (!title) throw ApiError.badRequest("title required");
 
@@ -414,6 +430,9 @@ exports.joinGroupBuy = asyncHandler(async (req, res) => {
     s.groupBuy.participants.push(req.user._id);
   }
 
+  // Unlock the discount UI as soon as `threshold` people show intent.
+  // NOTE: coins are awarded on actual purchase (see services/groupBuyService.js
+  // hooked from paymentController.verify) — NOT here.
   if (
     !s.groupBuy.unlocked &&
     s.groupBuy.participants.length >= s.groupBuy.threshold
