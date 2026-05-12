@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const router = express.Router();
 const env = require('../config/env');
 const logger = require('../utils/logger');
+const queryEnricher = require('../services/queryEnricher');
 
 const RECO_API = env.recommendation.apiUrl;
 const TIMEOUT = env.recommendation.timeout;
@@ -39,60 +40,245 @@ async function callHFGet(path, params) {
   return res.data;
 }
 
+const PRODUCT_SELECT =
+  '_id title price images seller rating reviewCount category description slug';
+
+function shapeFromDB(item, dbProduct) {
+  return {
+    ...(item || {}),
+    _id: String(dbProduct._id),
+    title: dbProduct.title,
+    price: typeof dbProduct.price === 'number' ? dbProduct.price : item?.price,
+    image: dbProduct.images?.[0]?.url || item?.image || '',
+    images: dbProduct.images || [],
+    seller: dbProduct.seller,
+    category: dbProduct.category || item?.category,
+    slug: dbProduct.slug,
+    rating: dbProduct.rating,
+    reviewCount: dbProduct.reviewCount,
+    match_score: item?.match_score,
+  };
+}
+
+function escapeRegex(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
- * HF model ke paas images nahi hoti — MongoDB se real images attach karo
- * aur sirf wahi results return karo jinka product DB mein hai (taaki click pe 404 na aaye).
+ * HF kabhi _id deta hai, kabhi sirf title. Pehle ObjectId match, fir
+ * exact/regex title match. Jo DB mein mile bas wahi return — taaki har
+ * card click pe valid product page khule.
  */
 async function enrichWithImages(items) {
-  if (!items || items.length === 0) return items;
-
+  if (!items || items.length === 0) return [];
   try {
     const Product = require('../models/Product');
 
-    // Sirf valid MongoDB ObjectIds rakho (HF kabhi custom string ID bhi return karta hai)
-    const ids = items
+    const validIds = items
       .map((p) => String(p._id || p.id || ''))
       .filter((id) => mongoose.Types.ObjectId.isValid(id));
+    const titles = items.map((p) => String(p.title || '').trim()).filter(Boolean);
 
-    if (ids.length === 0) return [];
+    const [byId, byTitle] = await Promise.all([
+      validIds.length
+        ? Product.find({ _id: { $in: validIds } })
+            .populate('seller', 'shopName isVerifiedSeller')
+            .select(PRODUCT_SELECT)
+            .lean()
+        : Promise.resolve([]),
+      titles.length
+        ? Product.find({
+            isActive: true,
+            title: { $in: titles.map((t) => new RegExp(`^${escapeRegex(t)}$`, 'i')) },
+          })
+            .populate('seller', 'shopName isVerifiedSeller')
+            .select(PRODUCT_SELECT)
+            .lean()
+        : Promise.resolve([]),
+    ]);
 
-    const dbProducts = await Product.find({ _id: { $in: ids } })
-      .populate('seller', 'shopName isVerifiedSeller')
-      .select('_id title price images seller rating reviewCount category')
-      .lean();
-
-    const dbMap = {};
-    dbProducts.forEach((p) => {
-      dbMap[String(p._id)] = p;
+    const idMap = {};
+    byId.forEach((p) => {
+      idMap[String(p._id)] = p;
+    });
+    const titleMap = {};
+    byTitle.forEach((p) => {
+      const k = p.title.toLowerCase().trim();
+      if (!titleMap[k]) titleMap[k] = p;
     });
 
-    // Drop kar do woh items jinka koi real DB product nahi — click karte hi 404 hoga
     return items
       .map((item) => {
         const itemId = String(item._id || item.id || '');
-        const dbProduct = dbMap[itemId];
-        if (!dbProduct) return null;
-
-        return {
-          ...item,
-          _id: String(dbProduct._id),
-          image: dbProduct.images?.[0]?.url || item.image || '',
-          images: dbProduct.images || [],
-          seller: dbProduct.seller || item.seller,
-          title: item.title || dbProduct.title,
-          price: typeof item.price === 'number' ? item.price : dbProduct.price,
-          category: item.category || dbProduct.category,
-        };
+        const byIdMatch = mongoose.Types.ObjectId.isValid(itemId) ? idMap[itemId] : null;
+        const byTitleMatch = !byIdMatch && item.title
+          ? titleMap[String(item.title).toLowerCase().trim()]
+          : null;
+        const db = byIdMatch || byTitleMatch;
+        if (!db) return null;
+        return shapeFromDB(item, db);
       })
       .filter(Boolean);
   } catch (err) {
     logger.warn('Image enrichment failed (non-fatal):', err.message);
-    return items.filter((p) => mongoose.Types.ObjectId.isValid(String(p._id || p.id || '')));
+    return [];
+  }
+}
+
+// Hinglish/Hindi → English synonyms — agar Gemini key nahi hai to bhi
+// common product names samajhne mein madad karta hai.
+const HINDI_SYNONYMS = {
+  haldi: ['turmeric', 'haldi'],
+  chai: ['tea', 'chai'],
+  kapda: ['cloth', 'fabric', 'kurta', 'saree'],
+  kapde: ['cloth', 'fabric', 'kurta', 'saree'],
+  mithai: ['sweets', 'kaju katli', 'mithai'],
+  mithaai: ['sweets', 'mithai'],
+  masala: ['spice', 'masala', 'garam masala'],
+  chawal: ['rice', 'basmati'],
+  chaval: ['rice', 'basmati'],
+  achaar: ['pickle', 'achar', 'mango pickle'],
+  achar: ['pickle', 'mango pickle'],
+  aam: ['mango'],
+  payal: ['anklet', 'payal'],
+  jhumka: ['jhumka', 'earrings'],
+  juta: ['footwear', 'jutti', 'mojari'],
+  jute: ['footwear', 'jutti'],
+  chappal: ['kolhapuri', 'footwear', 'chappal'],
+  jewellery: ['jewelry', 'necklace', 'kundan'],
+  jewelery: ['jewelry'],
+  zewar: ['jewelry', 'necklace'],
+  bartan: ['kitchen', 'utensil', 'brass', 'copper'],
+  matka: ['terracotta', 'pot', 'matka'],
+  diya: ['diya', 'pooja', 'diwali'],
+  rangoli: ['rangoli', 'diwali'],
+  tshirt: ['t-shirt', 'tshirt', 'kurta'],
+  't-shirt': ['t-shirt', 'tshirt', 'kurta'],
+  shirt: ['shirt', 'kurta'],
+  shoes: ['footwear', 'jutti', 'kolhapuri', 'mojari'],
+  bag: ['bag', 'tote', 'sling', 'clutch'],
+  earring: ['earrings', 'jhumka'],
+  earrings: ['earrings', 'jhumka'],
+  pooja: ['pooja', 'diya', 'brass', 'thali'],
+  puja: ['pooja', 'diya', 'brass'],
+  bridal: ['bridal', 'lehenga', 'sherwani', 'jewelry'],
+  shaadi: ['wedding', 'bridal', 'lehenga', 'sherwani'],
+  wedding: ['wedding', 'bridal', 'lehenga'],
+  diwali: ['diwali', 'diya', 'rangoli', 'pooja'],
+  holi: ['holi', 'gulal'],
+};
+
+function expandQueryTerms(query) {
+  const lower = String(query).toLowerCase();
+  const raw = lower
+    .split(/[\s\-_,.;:!?]+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 2 && !/^\d+$/.test(t));
+
+  const stopwords = new Set(['the', 'and', 'for', 'under', 'with', 'from', 'into', 'over', 'best', 'cheap']);
+  const filtered = raw.filter((t) => !stopwords.has(t));
+
+  // Hindi/Hinglish synonyms expand karo
+  const expanded = new Set(filtered);
+  for (const t of filtered) {
+    const syn = HINDI_SYNONYMS[t];
+    if (syn) syn.forEach((s) => expanded.add(s.toLowerCase()));
+  }
+  return Array.from(expanded).slice(0, 12);
+}
+
+/**
+ * HF se kuch nahi mila to local Mongo pe regex search.
+ * Order of preference for query understanding:
+ *   1. Gemini (if GEMINI_API_KEY set) — best NLU, handles long queries.
+ *   2. Built-in Hindi→English synonym map — handles common product names.
+ *   3. Raw tokenization — last resort.
+ */
+async function localFallbackSearch(query, { limit = 8 } = {}) {
+  try {
+    const Product = require('../models/Product');
+
+    let terms = expandQueryTerms(query);
+    let categoryHint = null;
+
+    // Agar Gemini available hai to query ko enrich karo — keywords + category
+    if (queryEnricher.isEnabled()) {
+      const enriched = await queryEnricher.enrichQuery(query);
+      if (enriched && enriched.keywords.length > 0) {
+        const enrichedSet = new Set(terms);
+        enriched.keywords.forEach((k) => enrichedSet.add(String(k).toLowerCase()));
+        terms = Array.from(enrichedSet).slice(0, 15);
+        categoryHint = enriched.category || null;
+      }
+    }
+
+    if (terms.length === 0) return [];
+    const regexes = terms.map((t) => new RegExp(escapeRegex(t), 'i'));
+    const matchClause = {
+      isActive: true,
+      $or: [
+        { title: { $in: regexes } },
+        { description: { $in: regexes } },
+        { category: { $in: regexes } },
+        { tags: { $in: regexes } },
+        { slug: { $in: regexes } },
+      ],
+    };
+    if (categoryHint) {
+      matchClause.$or.push({ category: new RegExp(escapeRegex(categoryHint), 'i') });
+    }
+
+    const products = await Product.find(matchClause)
+      .populate('seller', 'shopName isVerifiedSeller')
+      .select(PRODUCT_SELECT)
+      .limit(limit * 4)
+      .lean();
+
+    return products
+      .map((p) => {
+        const hay = `${p.title} ${p.description || ''} ${p.category || ''} ${(p.tags || []).join(' ')} ${p.slug || ''}`.toLowerCase();
+        const hits = terms.filter((t) => hay.includes(t)).length;
+        const titleHits = terms.filter((t) => p.title.toLowerCase().includes(t)).length;
+        const categoryBoost = categoryHint && p.category && p.category.toLowerCase().includes(categoryHint.toLowerCase()) ? 3 : 0;
+        return { product: p, hits, score: hits + titleHits * 2 + categoryBoost };
+      })
+      .filter((x) => x.hits > 0 || (categoryHint && x.score > 0))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map(({ product, hits }) =>
+        shapeFromDB({ match_score: Math.min(100, Math.round((hits / terms.length) * 100)) }, product),
+      );
+  } catch (err) {
+    logger.warn('Local fallback search failed:', err.message);
+    return [];
+  }
+}
+
+async function nearestProduct() {
+  // Last-resort: query se kuch match nahi hua to 4 diverse popular products
+  // return karo — different categories se, na ki saari sarees.
+  try {
+    const Product = require('../models/Product');
+    const popular = await Product.aggregate([
+      { $match: { isActive: true } },
+      { $sort: { rating: -1, salesCount: -1, createdAt: -1 } },
+      { $group: { _id: '$category', doc: { $first: '$$ROOT' } } },
+      { $replaceRoot: { newRoot: '$doc' } },
+      { $limit: 4 },
+    ]);
+    if (popular.length === 0) return [];
+    await Product.populate(popular, { path: 'seller', select: 'shopName isVerifiedSeller' });
+    return popular.map((p) => shapeFromDB({ match_score: 0 }, p));
+  } catch (err) {
+    logger.warn('Nearest-product fallback failed:', err.message);
+    return [];
   }
 }
 
 /**
  * POST /api/recommendations/search
+ * Fallback chain: HF model → title lookup → local regex search → nearest product.
+ * Guarantee: agar DB mein ek bhi active product hai, response kabhi empty nahi.
  */
 router.post('/search', async (req, res) => {
   try {
@@ -100,18 +286,47 @@ router.post('/search', async (req, res) => {
     if (!query || typeof query !== 'string' || query.trim() === '') {
       return res.status(400).json({ success: false, message: 'Query is required', results: [] });
     }
+    const q = query.trim();
 
-    const data = await callHF('/recommend', { query: query.trim(), city: city || null });
-    const raw = normalize(data);
+    let hfData = null;
+    try {
+      hfData = await callHF('/recommend', { query: q, city: city || null });
+    } catch (e) {
+      logger.warn('HF /recommend unavailable, will use local fallback:', e.message);
+    }
 
-    // ✅ Images attach karo MongoDB se
-    const results = await enrichWithImages(raw);
+    let results = await enrichWithImages(normalize(hfData));
+    let source = 'hf';
+
+    // HF ke results kam aaye toh local DB se augment karo (HF service mostly
+    // demo data return karta hai — local DB mein zyada variety hai).
+    if (results.length < 6) {
+      const localExtras = await localFallbackSearch(q, { limit: 12 });
+      const seen = new Set(results.map((r) => String(r._id)));
+      const merged = [...results];
+      for (const ex of localExtras) {
+        if (!seen.has(String(ex._id))) {
+          merged.push(ex);
+          seen.add(String(ex._id));
+        }
+      }
+      if (merged.length > results.length) {
+        results = merged;
+        source = results.length > 0 && hfData ? 'hf+local' : 'local';
+      }
+    }
+
+    if (results.length === 0) {
+      results = await nearestProduct(q);
+      source = 'nearest';
+    }
 
     return res.json({
       success: true,
       results,
-      searched_product: data?.searched_product || null,
-      product_found: !!data?.product_found,
+      source,
+      searched_product: hfData?.searched_product || null,
+      product_found: !!hfData?.product_found,
     });
   } catch (err) {
     logger.warn('Recommendation search failed:', err.message);
