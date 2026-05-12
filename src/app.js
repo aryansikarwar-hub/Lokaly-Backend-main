@@ -12,13 +12,11 @@ const app = express();
 // ============================================
 // TRUST PROXY
 // ============================================
-
 app.set("trust proxy", 1);
 
 // ============================================
 // SECURITY
 // ============================================
-
 app.use(
   helmet({
     crossOriginResourcePolicy: {
@@ -30,7 +28,6 @@ app.use(
 // ============================================
 // CORS
 // ============================================
-
 app.use(
   cors({
     origin: env.clientUrl,
@@ -41,11 +38,9 @@ app.use(
 // ============================================
 // BODY PARSER
 // ============================================
-
 app.use(
   express.json({
     limit: "50mb",
-
     verify: (req, _res, buf) => {
       if (buf?.length) {
         req.rawBody = buf.toString("utf8");
@@ -64,7 +59,6 @@ app.use(
 // ============================================
 // LOGGER
 // ============================================
-
 if (!env.isProd) {
   app.use(morgan("dev"));
 }
@@ -72,7 +66,6 @@ if (!env.isProd) {
 // ============================================
 // RATE LIMIT
 // ============================================
-
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 600,
@@ -83,12 +76,10 @@ const apiLimiter = rateLimit({
 app.use("/api", apiLimiter);
 
 // ============================================
-// STATIC FILES
+// STATIC UPLOADS
 // ============================================
-
 app.use(
   "/uploads",
-
   (req, res, next) => {
     res.setHeader(
       "Cross-Origin-Resource-Policy",
@@ -97,16 +88,12 @@ app.use(
 
     next();
   },
-
-  express.static(
-    path.join(process.cwd(), "uploads")
-  )
+  express.static(path.join(process.cwd(), "uploads"))
 );
 
 // ============================================
-// HEALTH
+// HEALTH CHECK
 // ============================================
-
 app.get("/health", (_req, res) => {
   res.json({
     ok: true,
@@ -119,7 +106,6 @@ app.get("/health", (_req, res) => {
 // ============================================
 // ROOT
 // ============================================
-
 app.get("/", (_req, res) => {
   res.json({
     name: "Lokaly API",
@@ -133,22 +119,13 @@ app.get("/", (_req, res) => {
 // ============================================
 
 // AUTH
-app.use(
-  "/api/auth",
-  require("./routes/auth")
-);
+app.use("/api/auth", require("./routes/authRoutes"));
 
 // UPLOAD
-app.use(
-  "/api/upload",
-  require("./routes/uploadRoutes")
-);
+app.use("/api/upload", require("./routes/uploadRoutes"));
 
 // AGORA
-app.use(
-  "/api/agora",
-  require("./routes/agora")
-);
+app.use("/api/agora", require("./routes/agora"));
 
 // RECOMMENDATIONS
 app.use(
@@ -156,27 +133,21 @@ app.use(
   require("./routes/recommendations")
 );
 
-// OTHER ROUTES
-app.use(
-  "/api",
-  require("./routes")
-);
+// ALL ROUTES
+app.use("/api", require("./routes"));
 
 // ============================================
-// ERROR HANDLERS
+// ERROR HANDLER
 // ============================================
-
 const {
   notFound,
   errorHandler,
 } = require("./middleware/errorHandler");
 
 app.use(notFound);
-
 app.use(errorHandler);
 
 // ============================================
 // EXPORT
 // ============================================
-
 module.exports = app;
