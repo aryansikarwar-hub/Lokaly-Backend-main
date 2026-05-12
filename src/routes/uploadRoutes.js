@@ -1,3 +1,6 @@
+// routes/upload.js
+const express = require("express");
+const path = require("path");
 // backend/routes/uploadRoutes.js
 // =====================================================
 // Cloudinary-based upload route
@@ -15,6 +18,43 @@ const { cloudinary, isConfigured } = require("../config/cloudinary");
 
 const router = express.Router();
 
+// ✅ Real JWT auth
+const { requireAuth } = require("../middleware/auth");
+
+// ✅ Use the shared upload middleware (correct UPLOAD_ROOT path)
+const { upload, toPublicUrl } = require("../middleware/upload");
+
+// ============ SINGLE FILE UPLOAD ============
+router.post("/", requireAuth, upload.single("file"), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "Koi file nahi mili" });
+
+  const isVideo = req.file.mimetype.startsWith("video/");
+  const kind = isVideo ? "video" : "image";
+  const { url, publicId } = toPublicUrl(req.file);
+
+  console.log("[Upload] Success:", url, kind);
+
+  return res.json({
+    url,
+    publicId: publicId || "",
+    kind,
+    filename: req.file.filename,
+    size: req.file.size,
+    width: req.file.width || null,
+    height: req.file.height || null,
+    duration: req.file.duration || null,
+// ============ MULTER CONFIG ============
+const UPLOAD_DIR = path.join(__dirname, "..", "uploads");
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, UPLOAD_DIR),
+  filename: (req, file, cb) => {
+    const hash = crypto.randomBytes(8).toString("hex");
+    const ext = path.extname(file.originalname);
+    cb(null, `${Date.now()}-${hash}${ext}`);
+  },
+});
 // =====================================================
 // Multer (memory storage — no disk writes)
 // =====================================================
@@ -30,6 +70,30 @@ const upload = multer({
     const allowed = /jpeg|jpg|png|webp|gif|mp4|mov|webm|avi|mkv|m4v/i;
     const ok =
       allowed.test(file.mimetype) ||
+      allowed.test(path.extname(file.originalname));
+    if (ok) cb(null, true);
+    else cb(new Error(`Invalid file type: ${file.mimetype}`));
+  },
+});
+
+// ============ OPTIONAL: Cloudinary ============
+let cloudinary = null;
+try {
+  if (
+    process.env.CLOUDINARY_CLOUD_NAME &&
+    process.env.CLOUDINARY_API_KEY &&
+    process.env.CLOUDINARY_API_SECRET
+  ) {
+    cloudinary = require("cloudinary").v2;
+    cloudinary.config({
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      api_secret: process.env.CLOUDINARY_API_SECRET,
+    });
+    console.log("[Upload] Cloudinary enabled");
+  }
+} catch (e) {
+  console.log("[Upload] Cloudinary SDK not installed — using local storage");
       allowed.test((file.originalname || "").split(".").pop());
     if (ok) return cb(null, true);
     cb(new Error(`Invalid file type: ${file.mimetype}`));
@@ -64,6 +128,12 @@ function detectKind(mimetype = "") {
   return mimetype.startsWith("video/") ? "video" : "image";
 }
 
+    console.log(
+      "[Upload] File received:",
+      req.file.originalname,
+      req.file.size,
+      "bytes",
+    );
 // =====================================================
 // SINGLE FILE — POST /api/upload  (field "file")
 // =====================================================
@@ -88,6 +158,14 @@ router.post("/", (req, res) => {
         });
       }
 
+      // ===== Option B: Serve from local =====
+      // Make sure your Express app serves /uploads statically:
+      // app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+      // Use relative URL so it works via Vite proxy in dev and real domain in prod
+      const publicUrl = `/uploads/${req.file.filename}`;
+      console.log("[Upload] Local saved:", publicUrl);
+      res.json({
+        url: publicUrl,
       const kind = detectKind(req.file.mimetype);
       const result = await uploadBufferToCloudinary(req.file.buffer, {
         folder: "lokaly/products",
@@ -112,6 +190,39 @@ router.post("/", (req, res) => {
   });
 });
 
+// ============ MULTIPLE FILES ============
+router.post("/multi", requireAuth, upload.array("files", 10), (req, res) => {
+  if (!req.files?.length) return res.status(400).json({ error: "No files" });
+
+  const results = req.files.map((file) => {
+    const isVideo = file.mimetype.startsWith("video/");
+    const { url, publicId } = toPublicUrl(file);
+    return { url, publicId: publicId || "", kind: isVideo ? "video" : "image" };
+  });
+
+  return res.json({ files: results });
+          if (cloudinary) {
+            const r = await cloudinary.uploader.upload(file.path, {
+              resource_type: isVideo ? "video" : "image",
+              folder: "feed",
+            });
+            fs.unlink(file.path, () => {});
+            return { url: r.secure_url, publicId: r.public_id, kind };
+          }
+          return {
+            url: `/uploads/${file.filename}`,
+            kind,
+            filename: file.filename,
+          };
+        }),
+      );
+      res.json({ files: results });
+    } catch (e) {
+      console.error("[Upload Multi] error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  },
+);
 // =====================================================
 // MULTI FILE — POST /api/upload/multi  (field "files")
 // =====================================================
