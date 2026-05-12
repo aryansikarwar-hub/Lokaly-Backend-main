@@ -10,13 +10,15 @@ const env = require("./config/env");
 const app = express();
 
 // ============================================
-// TRUST PROXY (Render / Railway / Vercel)
+// TRUST PROXY
 // ============================================
+
 app.set("trust proxy", 1);
 
 // ============================================
 // SECURITY
 // ============================================
+
 app.use(
   helmet({
     crossOriginResourcePolicy: {
@@ -28,6 +30,7 @@ app.use(
 // ============================================
 // CORS
 // ============================================
+
 app.use(
   cors({
     origin: env.clientUrl,
@@ -38,9 +41,11 @@ app.use(
 // ============================================
 // BODY PARSER
 // ============================================
+
 app.use(
   express.json({
     limit: "50mb",
+
     verify: (req, _res, buf) => {
       if (buf?.length) {
         req.rawBody = buf.toString("utf8");
@@ -59,6 +64,7 @@ app.use(
 // ============================================
 // LOGGER
 // ============================================
+
 if (!env.isProd) {
   app.use(morgan("dev"));
 }
@@ -66,6 +72,7 @@ if (!env.isProd) {
 // ============================================
 // RATE LIMIT
 // ============================================
+
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 600,
@@ -76,10 +83,12 @@ const apiLimiter = rateLimit({
 app.use("/api", apiLimiter);
 
 // ============================================
-// STATIC UPLOADS
+// STATIC FILES
 // ============================================
+
 app.use(
   "/uploads",
+
   (req, res, next) => {
     res.setHeader(
       "Cross-Origin-Resource-Policy",
@@ -88,12 +97,16 @@ app.use(
 
     next();
   },
-  express.static(path.join(process.cwd(), "uploads"))
+
+  express.static(
+    path.join(process.cwd(), "uploads")
+  )
 );
 
 // ============================================
-// HEALTH CHECK
+// HEALTH
 // ============================================
+
 app.get("/health", (_req, res) => {
   res.json({
     ok: true,
@@ -106,6 +119,7 @@ app.get("/health", (_req, res) => {
 // ============================================
 // ROOT
 // ============================================
+
 app.get("/", (_req, res) => {
   res.json({
     name: "Lokaly API",
@@ -119,7 +133,10 @@ app.get("/", (_req, res) => {
 // ============================================
 
 // AUTH
-app.use("/api/auth", require("./routes/auth"));
+app.use(
+  "/api/auth",
+  require("./routes/auth")
+);
 
 // UPLOAD
 app.use(
@@ -139,21 +156,27 @@ app.use(
   require("./routes/recommendations")
 );
 
-// ALL OTHER ROUTES
-app.use("/api", require("./routes"));
+// OTHER ROUTES
+app.use(
+  "/api",
+  require("./routes")
+);
 
 // ============================================
-// ERROR HANDLER
+// ERROR HANDLERS
 // ============================================
+
 const {
   notFound,
   errorHandler,
 } = require("./middleware/errorHandler");
 
 app.use(notFound);
+
 app.use(errorHandler);
 
 // ============================================
 // EXPORT
 // ============================================
+
 module.exports = app;
