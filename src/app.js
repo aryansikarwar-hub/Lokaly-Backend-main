@@ -3,37 +3,34 @@ const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
 const rateLimit = require("express-rate-limit");
-const path = require("path"); // Added explicit import
+const path = require("path");
 
 const env = require("./config/env");
 
 const app = express();
 
-// Fix proxy issue FIRST
-app.set("trust proxy", 1); // Trusts Render proxy[web:12]
+app.set("trust proxy", 1);
 
-app.use(
-  helmet({
-    crossOriginResourcePolicy: { policy: "cross-origin" },
-  }),
-);
-// Allow configured CLIENT_URL + localhost:5173 in dev
+app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+
+// ✅ CORS: allow configured CLIENT_URL + localhost:5173 always
 const allowedOrigins = [
   env.clientUrl,
   "http://localhost:5173",
   "http://127.0.0.1:5173",
 ].filter(Boolean);
+
 app.use(
   cors({
     origin: (origin, cb) => {
-      // Allow no-origin requests (mobile apps, Postman, curl)
-      if (!origin) return cb(null, true);
+      if (!origin) return cb(null, true); // curl, Postman, mobile apps
       if (allowedOrigins.includes(origin)) return cb(null, true);
       cb(new Error("CORS: origin not allowed: " + origin));
     },
     credentials: true,
   }),
 );
+
 app.use(
   express.json({
     limit: "2mb",
@@ -45,7 +42,6 @@ app.use(
 app.use(express.urlencoded({ extended: true }));
 if (!env.isProd) app.use(morgan("dev"));
 
-// Rate limit API routes
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 600,
@@ -54,53 +50,40 @@ const apiLimiter = rateLimit({
 });
 app.use("/api", apiLimiter);
 
-// Health check
-app.get("/health", (_req, res) => {
+app.get("/health", (_req, res) =>
   res.json({
     ok: true,
     service: "lokaly-backend",
     env: env.nodeEnv,
     timestamp: new Date().toISOString(),
-  });
-});
+  }),
+);
+app.get("/", (_req, res) => res.json({ name: "Lokaly API", version: "0.1.0" }));
 
-// Root info
-app.get("/", (_req, res) => {
-  res.json({
-    name: "Lokaly API",
-    version: "0.1.0",
-    docs: "/docs/API.md",
-  });
-});
-
-// Static uploads
+// ✅ Static uploads with full CORS headers for video range requests
 const UPLOAD_ROOT = path.join(__dirname, "..", "uploads");
-app.use(
-  "/uploads",
-  (req, res, next) => {
-    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-    next();
-  },
-  express.static(UPLOAD_ROOT),
-);
+const uploadCors = (req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin) res.setHeader("Access-Control-Allow-Origin", origin);
+  res.setHeader("Access-Control-Allow-Credentials", "true");
+  res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Range, Content-Type");
+  res.setHeader(
+    "Access-Control-Expose-Headers",
+    "Content-Range, Accept-Ranges, Content-Length",
+  );
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+};
+app.use("/uploads", uploadCors, express.static(UPLOAD_ROOT));
+app.use("/api/uploads", uploadCors, express.static(UPLOAD_ROOT));
 
-// Support uploads under API prefix as well (frontend may proxy /api/*)
-app.use(
-  "/api/uploads",
-  (req, res, next) => {
-    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-    next();
-  },
-  express.static(UPLOAD_ROOT),
-);
-
-// ROUTES ✅
+// ROUTES
 app.use("/api/agora", require("./routes/agora"));
 app.use("/api/recommendations", require("./routes/recommendations"));
-//app.use('/api/auth', require("./routes/auth"));   // ⭐ ADD THIS
 app.use("/api", require("./routes"));
 
-// Error handlers LAST
 const { notFound, errorHandler } = require("./middleware/errorHandler");
 app.use(notFound);
 app.use(errorHandler);
