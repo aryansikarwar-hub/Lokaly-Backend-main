@@ -88,25 +88,55 @@ exports.getById = asyncHandler(async (req, res) => {
 
 /* =========================================================
    HELPER: normalise an image/video entry from the request body.
-   Accepts plain string URLs or objects { url, publicId }.
-   Returns null for anything that can't produce a valid https URL.
+   FIX: Handles all formats:
+     - plain string URL
+     - { url, publicId }
+     - { secure_url, public_id }   (Cloudinary direct)
+   Rejects blob:// and data: URIs (client-side only, never stored).
 ========================================================= */
 function normaliseMedia(item) {
   if (!item) return null;
 
+  let url = "";
+  let publicId = "";
+
   if (typeof item === "string") {
-    const trimmed = item.trim();
-    if (!trimmed) return null;
-    return { url: trimmed, publicId: "" };
+    url = item.trim();
+  } else if (typeof item === "object") {
+    url = String(item.url || item.secure_url || "").trim();
+    publicId = String(item.publicId || item.public_id || "").trim();
   }
 
-  if (typeof item === "object" && item.url) {
-    const url = String(item.url).trim();
-    if (!url) return null;
-    return { url, publicId: String(item.publicId || "") };
+  // Reject empty, blob, or data URIs — these are client-side only
+  if (!url || url.startsWith("blob:") || url.startsWith("data:")) return null;
+
+  return { url, publicId };
+}
+
+/* =========================================================
+   HELPER: safely parse attributes from request body.
+   Mongoose Map<String,String> requires all values to be strings.
+   Accepts:
+     - plain object   { color: "red" }
+     - JSON string    '{"color":"red"}'  (just in case)
+========================================================= */
+function parseAttributes(raw) {
+  if (!raw) return {};
+
+  let obj = raw;
+  if (typeof raw === "string") {
+    try { obj = JSON.parse(raw); } catch { return {}; }
   }
 
-  return null;
+  if (typeof obj !== "object" || Array.isArray(obj)) return {};
+
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    const key = String(k).trim();
+    if (!key) continue;
+    out[key] = String(v ?? "");
+  }
+  return out;
 }
 
 exports.create = asyncHandler(async (req, res) => {
@@ -148,11 +178,11 @@ exports.create = asyncHandler(async (req, res) => {
     : [];
 
   // ── images ─────────────────────────────────────────────
-  const { toPublicUrl } = require("../middleware/upload");
   let images = [];
 
   if (req.files?.length) {
-    // multipart upload path (legacy)
+    // multipart/form-data upload path (legacy fallback)
+    const { toPublicUrl } = require("../middleware/upload");
     images = req.files
       .map((f) => toPublicUrl(f))
       .filter(Boolean)
@@ -161,7 +191,7 @@ exports.create = asyncHandler(async (req, res) => {
     images = body.images.map(normaliseMedia).filter(Boolean);
   }
 
-  // FIX: Validate that at least one image with a real URL exists
+  // FIX: Validate at least one real image URL exists
   if (images.length === 0) {
     throw ApiError.badRequest(
       "At least one image is required. Make sure images finish uploading before submitting."
@@ -175,16 +205,7 @@ exports.create = asyncHandler(async (req, res) => {
   }
 
   // ── attributes ─────────────────────────────────────────
-  // FIX: Safely handle attributes — body.attributes should be a plain object.
-  // Mongoose Map<String,String> rejects non-string values, so we coerce here.
-  let attributes = {};
-  if (body.attributes && typeof body.attributes === "object" && !Array.isArray(body.attributes)) {
-    for (const [k, v] of Object.entries(body.attributes)) {
-      const key = String(k).trim();
-      if (!key) continue;
-      attributes[key] = String(v ?? "");
-    }
-  }
+  const attributes = parseAttributes(body.attributes);
 
   // ── build payload ──────────────────────────────────────
   const payload = {
@@ -201,7 +222,6 @@ exports.create = asyncHandler(async (req, res) => {
     isActive: body.isActive !== false,
   };
 
-  // Optional fields
   if (body.compareAtPrice !== undefined && body.compareAtPrice !== "") {
     const cap = Number(body.compareAtPrice);
     if (Number.isFinite(cap) && cap >= 0) {
@@ -209,7 +229,20 @@ exports.create = asyncHandler(async (req, res) => {
     }
   }
 
-  const product = await Product.create(payload);
+  // Wrap Product.create in try/catch to surface Mongoose validation errors clearly
+  let product;
+  try {
+    product = await Product.create(payload);
+  } catch (err) {
+    // Mongoose ValidationError → extract field messages
+    if (err.name === "ValidationError") {
+      const messages = Object.values(err.errors)
+        .map((e) => e.message)
+        .join(", ");
+      throw ApiError.badRequest(`Validation failed: ${messages}`);
+    }
+    throw err;
+  }
 
   res.status(201).json({ product });
 });
@@ -240,32 +273,30 @@ exports.update = asyncHandler(async (req, res) => {
   if ("seller" in body) throw ApiError.badRequest("`seller` cannot be changed");
   if ("_id" in body) throw ApiError.badRequest("`_id` cannot be changed");
 
-  // Normalize images
+  // FIX: Normalise images using the same robust helper
   if (Array.isArray(body.images)) {
     body.images = body.images.map(normaliseMedia).filter(Boolean);
+    if (body.images.length === 0) {
+      throw ApiError.badRequest("At least one image is required");
+    }
   }
 
-  // Normalize videos
+  // Normalise videos
   if (Array.isArray(body.videos)) {
     body.videos = body.videos.map(normaliseMedia).filter(Boolean);
   }
 
-  // FIX: Normalize attributes for update too
-  if (body.attributes && typeof body.attributes === "object" && !Array.isArray(body.attributes)) {
-    const cleanAttrs = {};
-    for (const [k, v] of Object.entries(body.attributes)) {
-      const key = String(k).trim();
-      if (!key) continue;
-      cleanAttrs[key] = String(v ?? "");
-    }
-    body.attributes = cleanAttrs;
+  // FIX: Normalise attributes for update using the same helper
+  if ("attributes" in body) {
+    body.attributes = parseAttributes(body.attributes);
   }
 
+  // Apply whitelisted fields
   for (const key of UPDATABLE_PRODUCT_FIELDS) {
     if (key in body) product[key] = body[key];
   }
 
-  // Validate numeric fields
+  // Re-validate numeric fields after assignment
   if ("price" in body) {
     const price = Number(body.price);
     if (!Number.isFinite(price) || price <= 0) {
@@ -284,13 +315,26 @@ exports.update = asyncHandler(async (req, res) => {
 
   if ("title" in body) {
     const title = typeof body.title === "string" ? body.title.trim() : "";
-    if (!title) throw ApiError.badRequest("title cannot be empty");
+    if (!title || title.length < 3) {
+      throw ApiError.badRequest("title must be at least 3 characters");
+    }
     product.title = title;
   }
 
-  await product.save();
+  let updated;
+  try {
+    updated = await product.save();
+  } catch (err) {
+    if (err.name === "ValidationError") {
+      const messages = Object.values(err.errors)
+        .map((e) => e.message)
+        .join(", ");
+      throw ApiError.badRequest(`Validation failed: ${messages}`);
+    }
+    throw err;
+  }
 
-  res.json({ product });
+  res.json({ product: updated });
 });
 
 exports.remove = asyncHandler(async (req, res) => {
