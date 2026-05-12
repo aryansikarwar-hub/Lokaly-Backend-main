@@ -31,15 +31,12 @@ exports.list = asyncHandler(async (req, res) => {
 
   if (minPrice || maxPrice) {
     filter.price = {};
-
     if (minPrice) filter.price.$gte = Number(minPrice);
     if (maxPrice) filter.price.$lte = Number(maxPrice);
   }
 
   if (searchText) {
     const rx = new RegExp(escapeRegex(searchText), "i");
-
-    // Regex fallback keeps search usable even when text indexes are stale/missing.
     filter.$or = [
       { title: rx },
       { description: rx },
@@ -65,11 +62,7 @@ exports.list = asyncHandler(async (req, res) => {
       .sort(sortMap[sort] || sortMap.new)
       .skip(skip)
       .limit(limitNum)
-      .populate(
-        "seller",
-        "name shopName avatar trustScore isVerifiedSeller"
-      ),
-
+      .populate("seller", "name shopName avatar trustScore isVerifiedSeller"),
     Product.countDocuments(filter),
   ]);
 
@@ -88,12 +81,33 @@ exports.getById = asyncHandler(async (req, res) => {
     "name shopName avatar trustScore isVerifiedSeller location"
   );
 
-  if (!product) {
-    throw ApiError.notFound("Product not found");
-  }
+  if (!product) throw ApiError.notFound("Product not found");
 
   res.json({ product });
 });
+
+/* =========================================================
+   HELPER: normalise an image/video entry from the request body.
+   Accepts plain string URLs or objects { url, publicId }.
+   Returns null for anything that can't produce a valid https URL.
+========================================================= */
+function normaliseMedia(item) {
+  if (!item) return null;
+
+  if (typeof item === "string") {
+    const trimmed = item.trim();
+    if (!trimmed) return null;
+    return { url: trimmed, publicId: "" };
+  }
+
+  if (typeof item === "object" && item.url) {
+    const url = String(item.url).trim();
+    if (!url) return null;
+    return { url, publicId: String(item.publicId || "") };
+  }
+
+  return null;
+}
 
 exports.create = asyncHandler(async (req, res) => {
   if (req.user.role !== "seller" && req.user.role !== "admin") {
@@ -102,49 +116,39 @@ exports.create = asyncHandler(async (req, res) => {
 
   const body = req.body || {};
 
-  const title =
-    typeof body.title === "string" ? body.title.trim() : "";
-
+  // ── title ──────────────────────────────────────────────
+  const title = typeof body.title === "string" ? body.title.trim() : "";
   if (!title || title.length < 3) {
-    throw ApiError.badRequest(
-      "title must be at least 3 characters"
-    );
+    throw ApiError.badRequest("title must be at least 3 characters");
   }
 
+  // ── price ──────────────────────────────────────────────
   const price = Number(body.price);
-
   if (!Number.isFinite(price) || price <= 0) {
     throw ApiError.badRequest("price must be > 0");
   }
 
+  // ── stock ──────────────────────────────────────────────
   const stock =
-    body.stock === undefined || body.stock === ""
-      ? 100
-      : Number(body.stock);
-
+    body.stock === undefined || body.stock === "" ? 100 : Number(body.stock);
   if (!Number.isFinite(stock) || stock < 0) {
     throw ApiError.badRequest("stock must be >= 0");
   }
 
+  // ── category ───────────────────────────────────────────
   const category =
-    typeof body.category === "string"
-      ? body.category.trim()
-      : "";
-
+    typeof body.category === "string" ? body.category.trim() : "";
   if (!category) {
     throw ApiError.badRequest("category is required");
   }
 
+  // ── tags ───────────────────────────────────────────────
   const tags = Array.isArray(body.tags)
-    ? body.tags
-        .map((t) => String(t).trim())
-        .filter(Boolean)
+    ? body.tags.map((t) => String(t).trim()).filter(Boolean)
     : [];
 
-  // Build images array from uploaded files
-  // or from body (URL strings / objects)
+  // ── images ─────────────────────────────────────────────
   const { toPublicUrl } = require("../middleware/upload");
-
   let images = [];
 
   if (req.files?.length) {
@@ -152,108 +156,77 @@ exports.create = asyncHandler(async (req, res) => {
     images = req.files
       .map((f) => toPublicUrl(f))
       .filter(Boolean)
-      .map((url) => ({
-        url,
-        publicId: "",
-      }));
+      .map((url) => ({ url, publicId: "" }));
   } else if (Array.isArray(body.images)) {
-    // JSON path — frontend already uploaded via /api/upload
-    images = body.images
-      .map((img) => {
-        if (!img) return null;
-
-        // If frontend sends plain string URL
-        if (typeof img === "string") {
-          return {
-            url: img,
-            publicId: "",
-          };
-        }
-
-        // If frontend sends object
-        if (typeof img === "object" && img.url) {
-          return {
-            url: String(img.url),
-            publicId: String(img.publicId || ""),
-          };
-        }
-
-        return null;
-      })
-      .filter(Boolean);
+    images = body.images.map(normaliseMedia).filter(Boolean);
   }
 
-  // Build videos array
+  // FIX: Validate that at least one image with a real URL exists
+  if (images.length === 0) {
+    throw ApiError.badRequest(
+      "At least one image is required. Make sure images finish uploading before submitting."
+    );
+  }
+
+  // ── videos ─────────────────────────────────────────────
   let videos = [];
-
   if (Array.isArray(body.videos)) {
-    videos = body.videos
-      .map((vid) => {
-        if (!vid) return null;
-
-        // If frontend sends plain string URL
-        if (typeof vid === "string") {
-          return {
-            url: vid,
-            publicId: "",
-          };
-        }
-
-        // If frontend sends object
-        if (typeof vid === "object" && vid.url) {
-          return {
-            url: String(vid.url),
-            publicId: String(vid.publicId || ""),
-          };
-        }
-
-        return null;
-      })
-      .filter(Boolean);
+    videos = body.videos.map(normaliseMedia).filter(Boolean);
   }
 
+  // ── attributes ─────────────────────────────────────────
+  // FIX: Safely handle attributes — body.attributes should be a plain object.
+  // Mongoose Map<String,String> rejects non-string values, so we coerce here.
+  let attributes = {};
+  if (body.attributes && typeof body.attributes === "object" && !Array.isArray(body.attributes)) {
+    for (const [k, v] of Object.entries(body.attributes)) {
+      const key = String(k).trim();
+      if (!key) continue;
+      attributes[key] = String(v ?? "");
+    }
+  }
+
+  // ── build payload ──────────────────────────────────────
   const payload = {
-    ...body,
     title,
-    price,
-    stock,
+    description: typeof body.description === "string" ? body.description.trim() : "",
     category,
     tags,
+    price,
+    stock,
     images,
     videos,
+    attributes,
     seller: req.user._id,
+    isActive: body.isActive !== false,
   };
 
-  // Prevent overwriting protected fields
-  delete payload._id;
-  delete payload.seller;
-  delete payload.sellerLocation;
+  // Optional fields
+  if (body.compareAtPrice !== undefined && body.compareAtPrice !== "") {
+    const cap = Number(body.compareAtPrice);
+    if (Number.isFinite(cap) && cap >= 0) {
+      payload.compareAtPrice = cap;
+    }
+  }
 
   const product = await Product.create(payload);
 
   res.status(201).json({ product });
 });
 
+/* =========================================================
+   UPDATABLE fields whitelist
+========================================================= */
 const UPDATABLE_PRODUCT_FIELDS = [
-  "title",
-  "description",
-  "category",
-  "tags",
-  "price",
-  "compareAtPrice",
-  "stock",
-  "images",
-  "videos",
-  "attributes",
-  "isActive",
+  "title", "description", "category", "tags",
+  "price", "compareAtPrice", "stock",
+  "images", "videos", "attributes", "isActive",
 ];
 
 exports.update = asyncHandler(async (req, res) => {
   const product = await Product.findById(req.params.id);
 
-  if (!product) {
-    throw ApiError.notFound("Product not found");
-  }
+  if (!product) throw ApiError.notFound("Product not found");
 
   if (
     String(product.seller) !== String(req.user._id) &&
@@ -264,103 +237,54 @@ exports.update = asyncHandler(async (req, res) => {
 
   const body = req.body || {};
 
-  // Explicitly reject attempts to rewrite ownership / identity fields.
-  if ("seller" in body) {
-    throw ApiError.badRequest("`seller` cannot be changed");
-  }
-
-  if ("_id" in body) {
-    throw ApiError.badRequest("`_id` cannot be changed");
-  }
+  if ("seller" in body) throw ApiError.badRequest("`seller` cannot be changed");
+  if ("_id" in body) throw ApiError.badRequest("`_id` cannot be changed");
 
   // Normalize images
   if (Array.isArray(body.images)) {
-    body.images = body.images
-      .map((img) => {
-        if (!img) return null;
-
-        if (typeof img === "string") {
-          return {
-            url: img,
-            publicId: "",
-          };
-        }
-
-        if (typeof img === "object" && img.url) {
-          return {
-            url: String(img.url),
-            publicId: String(img.publicId || ""),
-          };
-        }
-
-        return null;
-      })
-      .filter(Boolean);
+    body.images = body.images.map(normaliseMedia).filter(Boolean);
   }
 
   // Normalize videos
   if (Array.isArray(body.videos)) {
-    body.videos = body.videos
-      .map((vid) => {
-        if (!vid) return null;
+    body.videos = body.videos.map(normaliseMedia).filter(Boolean);
+  }
 
-        if (typeof vid === "string") {
-          return {
-            url: vid,
-            publicId: "",
-          };
-        }
-
-        if (typeof vid === "object" && vid.url) {
-          return {
-            url: String(vid.url),
-            publicId: String(vid.publicId || ""),
-          };
-        }
-
-        return null;
-      })
-      .filter(Boolean);
+  // FIX: Normalize attributes for update too
+  if (body.attributes && typeof body.attributes === "object" && !Array.isArray(body.attributes)) {
+    const cleanAttrs = {};
+    for (const [k, v] of Object.entries(body.attributes)) {
+      const key = String(k).trim();
+      if (!key) continue;
+      cleanAttrs[key] = String(v ?? "");
+    }
+    body.attributes = cleanAttrs;
   }
 
   for (const key of UPDATABLE_PRODUCT_FIELDS) {
-    if (key in body) {
-      product[key] = body[key];
-    }
+    if (key in body) product[key] = body[key];
   }
 
   // Validate numeric fields
   if ("price" in body) {
     const price = Number(body.price);
-
     if (!Number.isFinite(price) || price <= 0) {
       throw ApiError.badRequest("price must be > 0");
     }
-
     product.price = price;
   }
 
   if ("stock" in body) {
     const stock = Number(body.stock);
-
     if (!Number.isFinite(stock) || stock < 0) {
       throw ApiError.badRequest("stock must be >= 0");
     }
-
     product.stock = stock;
   }
 
-  // Validate title
   if ("title" in body) {
-    const title =
-      typeof body.title === "string"
-        ? body.title.trim()
-        : "";
-
-    if (!title) {
-      throw ApiError.badRequest("title cannot be empty");
-    }
-
+    const title = typeof body.title === "string" ? body.title.trim() : "";
+    if (!title) throw ApiError.badRequest("title cannot be empty");
     product.title = title;
   }
 
@@ -372,9 +296,7 @@ exports.update = asyncHandler(async (req, res) => {
 exports.remove = asyncHandler(async (req, res) => {
   const product = await Product.findById(req.params.id);
 
-  if (!product) {
-    throw ApiError.notFound("Product not found");
-  }
+  if (!product) throw ApiError.notFound("Product not found");
 
   if (
     String(product.seller) !== String(req.user._id) &&
@@ -384,16 +306,13 @@ exports.remove = asyncHandler(async (req, res) => {
   }
 
   product.isActive = false;
-
   await product.save();
 
   res.json({ ok: true });
 });
 
 exports.mine = asyncHandler(async (req, res) => {
-  const items = await Product.find({
-    seller: req.user._id,
-  }).sort({
+  const items = await Product.find({ seller: req.user._id }).sort({
     createdAt: -1,
   });
 
