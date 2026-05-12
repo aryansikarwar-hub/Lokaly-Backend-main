@@ -37,7 +37,7 @@ const liveSessionSchema = new mongoose.Schema(
     coHosts: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
     title: { type: String, required: true, maxlength: 120 },
     description: { type: String, maxlength: 1000, default: "" },
-    coverImage: String,
+    coverImage: { type: String, default: "" },
     category: String,
 
     status: {

@@ -4,7 +4,7 @@ const multer = require('multer');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const { cloudinary, isConfigured } = require('../config/cloudinary');
 
-const UPLOAD_ROOT = path.join(process.cwd(), 'uploads');
+const UPLOAD_ROOT = path.join(__dirname, '..', '..', 'uploads');
 if (!fs.existsSync(UPLOAD_ROOT)) fs.mkdirSync(UPLOAD_ROOT, { recursive: true });
 
 function makeStorage() {
