@@ -119,6 +119,23 @@ exports.share = asyncHandler(async (req, res) => {
   res.json({ shares: post.shares });
 });
 
+exports.update = asyncHandler(async (req, res) => {
+  const post = await Post.findById(req.params.id);
+  if (!post) throw ApiError.notFound('Post not found');
+  if (String(post.author) !== String(req.user._id) && req.user.role !== 'admin') {
+    throw ApiError.forbidden('Not your post');
+  }
+  const { caption, description } = req.body || {};
+  if (caption !== undefined) {
+    post.caption = caption;
+    post.hashtags = extractHashtags(caption);
+  }
+  if (description !== undefined) post.description = description;
+  await post.save();
+  await post.populate('author', 'name shopName avatar');
+  res.json({ post });
+});
+
 exports.remove = asyncHandler(async (req, res) => {
   const post = await Post.findById(req.params.id);
   if (!post) throw ApiError.notFound('Post not found');

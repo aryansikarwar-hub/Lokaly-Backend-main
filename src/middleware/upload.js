@@ -33,9 +33,9 @@ function makeStorage() {
 
 const upload = multer({
   storage: makeStorage(),
-  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB for videos
   fileFilter: (_req, file, cb) => {
-    const allowed = /image\/(png|jpe?g|webp)|video\/(mp4|quicktime)/;
+    const allowed = /image\/(png|jpe?g|webp)|video\/(mp4|quicktime|webm|x-msvideo)/;
     if (allowed.test(file.mimetype)) cb(null, true);
     else cb(new Error('Unsupported file type'));
   },

@@ -15,6 +15,8 @@ const postSchema = new mongoose.Schema({
   author: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
   kind: { type: String, enum: ['photo', 'video', 'reel'], default: 'photo' },
   caption: { type: String, maxlength: 1000, default: '' },
+  description: { type: String, maxlength: 2000, default: '' },
+  thumbnail: { type: String, default: '' },
   media: [{ url: String, publicId: String, kind: { type: String, enum: ['image', 'video'] } }],
   taggedProducts: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Product' }],
 
