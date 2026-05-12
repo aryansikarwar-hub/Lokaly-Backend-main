@@ -1,31 +1,49 @@
-const express = require('express');
-const cors = require('cors');
-const helmet = require('helmet');
-const morgan = require('morgan');
-const rateLimit = require('express-rate-limit');
-const path = require('path');  // Added explicit import
+const express = require("express");
+const cors = require("cors");
+const helmet = require("helmet");
+const morgan = require("morgan");
+const rateLimit = require("express-rate-limit");
+const path = require("path"); // Added explicit import
 
-const env = require('./config/env');
+const env = require("./config/env");
 
 const app = express();
 
 // Fix proxy issue FIRST
-app.set('trust proxy', 1);  // Trusts Render proxy[web:12]
+app.set("trust proxy", 1); // Trusts Render proxy[web:12]
 
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" },
   }),
 );
-app.use(cors({ origin: env.clientUrl, credentials: true }));
-app.use(express.json({
-  limit: '2mb',
-  verify: (req, _res, buf) => {
-    if (buf && buf.length) req.rawBody = buf.toString('utf8');
-  },
-}));
+// Allow configured CLIENT_URL + localhost:5173 in dev
+const allowedOrigins = [
+  env.clientUrl,
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+].filter(Boolean);
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      // Allow no-origin requests (mobile apps, Postman, curl)
+      if (!origin) return cb(null, true);
+      if (allowedOrigins.includes(origin)) return cb(null, true);
+      cb(new Error("CORS: origin not allowed: " + origin));
+    },
+    credentials: true,
+  }),
+);
+app.use(
+  express.json({
+    limit: "2mb",
+    verify: (req, _res, buf) => {
+      if (buf && buf.length) req.rawBody = buf.toString("utf8");
+    },
+  }),
+);
 app.use(express.urlencoded({ extended: true }));
-if (!env.isProd) app.use(morgan('dev'));
+if (!env.isProd) app.use(morgan("dev"));
 
 // Rate limit API routes
 const apiLimiter = rateLimit({
@@ -34,24 +52,24 @@ const apiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
-app.use('/api', apiLimiter);
+app.use("/api", apiLimiter);
 
 // Health check
-app.get('/health', (_req, res) => {
+app.get("/health", (_req, res) => {
   res.json({
     ok: true,
-    service: 'lokaly-backend',
+    service: "lokaly-backend",
     env: env.nodeEnv,
     timestamp: new Date().toISOString(),
   });
 });
 
 // Root info
-app.get('/', (_req, res) => {
+app.get("/", (_req, res) => {
   res.json({
-    name: 'Lokaly API',
-    version: '0.1.0',
-    docs: '/docs/API.md',
+    name: "Lokaly API",
+    version: "0.1.0",
+    docs: "/docs/API.md",
   });
 });
 
@@ -77,13 +95,13 @@ app.use(
 );
 
 // ROUTES ✅
-app.use('/api/agora', require("./routes/agora"));
-app.use('/api/recommendations', require('./routes/recommendations'));
+app.use("/api/agora", require("./routes/agora"));
+app.use("/api/recommendations", require("./routes/recommendations"));
 //app.use('/api/auth', require("./routes/auth"));   // ⭐ ADD THIS
-app.use('/api', require('./routes'));
+app.use("/api", require("./routes"));
 
 // Error handlers LAST
-const { notFound, errorHandler } = require('./middleware/errorHandler');
+const { notFound, errorHandler } = require("./middleware/errorHandler");
 app.use(notFound);
 app.use(errorHandler);
 

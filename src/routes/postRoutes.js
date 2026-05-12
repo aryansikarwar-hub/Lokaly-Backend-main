@@ -6,21 +6,41 @@ const Post = require("../models/Post");
 const { Comment } = require("../models/Post"); // adjust if separate file
 
 // ============ AUTH MIDDLEWARE ============
-// Replace this with your actual auth middleware
-const requireAuth = (req, res, next) => {
-  if (!req.user?._id) return res.status(401).json({ error: "Login zaroori hai" });
-  next();
-};
+// ✅ Real JWT auth middleware
+const { requireAuth } = require('../middleware/auth');
 
 const optionalAuth = (req, res, next) => next();
 
 // ============ HELPERS ============
+// Normalize a media/thumbnail URL before saving to DB
+// Strips localhost origin (dev artifact), fixes missing leading slash
+function normalizeUrl(url) {
+  if (!url || typeof url !== "string") return url;
+  // Keep data: URLs (base64 thumbnails from frame extraction) as-is
+  if (url.startsWith("data:")) return url;
+  // Strip http://localhost:PORT prefix (dev artifact stored in old posts)
+  url = url.replace(/^https?:\/\/localhost:\d+/i, "");
+  // Already a clean absolute URL (Cloudinary, S3, etc.)
+  if (/^https?:\/\//i.test(url)) return url;
+  // Has no leading slash but is not http → could be:
+  //   "uploads/filename.mp4"  → add leading /
+  //   "filename.mp4"          → bare filename, add /uploads/ prefix
+  if (!url.startsWith("/")) {
+    if (url.startsWith("uploads/")) {
+      url = "/" + url; // "uploads/f.mp4" → "/uploads/f.mp4"
+    } else {
+      url = "/uploads/" + url; // "f.mp4" → "/uploads/f.mp4"
+    }
+  }
+  return url;
+}
+
 function sanitizeMedia(arr) {
   if (!Array.isArray(arr)) return [];
   return arr
     .filter((m) => m && typeof m.url === "string" && m.url.length > 0)
     .map((m) => ({
-      url: m.url,
+      url: normalizeUrl(m.url),
       kind: m.kind === "video" ? "video" : "image",
       width: Number(m.width) || undefined,
       height: Number(m.height) || undefined,
@@ -35,6 +55,17 @@ function decorate(post, userId) {
   obj.likedByMe = userId ? (obj.likes || []).some((id) => String(id) === String(userId)) : false;
   // Don't leak full savedBy list
   delete obj.savedBy;
+  // ✅ Normalize all media URLs from DB (fixes legacy http://localhost:PORT/uploads/...
+  // and bare "filename.jpg" stored from old backend versions)
+  if (Array.isArray(obj.media)) {
+    obj.media = obj.media.map((m) => m ? { ...m, url: normalizeUrl(m.url) } : m);
+  }
+  if (obj.thumbnail) {
+    obj.thumbnail = normalizeUrl(obj.thumbnail);
+  }
+  if (obj.author?.avatar) {
+    obj.author = { ...obj.author, avatar: normalizeUrl(obj.author.avatar) };
+  }
   return obj;
 }
 
@@ -116,9 +147,13 @@ router.post("/", requireAuth, async (req, res) => {
     const cleanMedia = sanitizeMedia(media);
     const validKind = ["photo", "video", "text"].includes(kind) ? kind : "photo";
 
+    // DEBUG: log exactly what arrived
+    console.log("[POST /posts] kind:", kind, "| media count:", media?.length, "| cleanMedia:", JSON.stringify(cleanMedia?.slice(0,2)));
+
     // Validation
     if (validKind === "video" && !cleanMedia.some((m) => m.kind === "video")) {
-      return res.status(400).json({ error: "Video required for reel" });
+      console.log("[POST /posts] 400: video required. Received media:", JSON.stringify(media));
+      return res.status(400).json({ error: "Video required for reel. Media received: " + JSON.stringify(media?.slice(0,1)) });
     }
     if (validKind === "photo" && cleanMedia.length === 0 && !caption.trim()) {
       return res.status(400).json({ error: "Photo ya caption zaroori hai" });
@@ -129,7 +164,7 @@ router.post("/", requireAuth, async (req, res) => {
       kind: validKind,
       caption: caption.slice(0, 2200),
       media: cleanMedia,
-      thumbnail: typeof thumbnail === "string" ? thumbnail : "",
+      thumbnail: typeof thumbnail === "string" ? normalizeUrl(thumbnail) : "",
       location: typeof location === "string" ? location.slice(0, 100) : "",
       music: typeof music === "string" ? music.slice(0, 100) : "",
       privacy: ["public", "followers", "private"].includes(privacy) ? privacy : "public",
