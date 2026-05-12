@@ -3,8 +3,7 @@ const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
 const rateLimit = require("express-rate-limit");
-const path = require("path"); // Added explicit import
-const path = require("path");
+const _path = require("path"); // FIX: renamed to avoid duplicate 'path' declaration
 
 const env = require("./config/env");
 
@@ -121,14 +120,10 @@ app.use("/api", apiLimiter);
 app.use(
   "/uploads",
   (req, res, next) => {
-    res.setHeader(
-      "Cross-Origin-Resource-Policy",
-      "cross-origin"
-    );
-
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
     next();
   },
-  express.static(path.join(process.cwd(), "uploads"))
+  express.static(_path.join(process.cwd(), "uploads")) // FIX: using _path
 );
 
 // ============================================
@@ -196,10 +191,7 @@ app.use("/api/upload", require("./routes/uploadRoutes"));
 app.use("/api/agora", require("./routes/agora"));
 
 // RECOMMENDATIONS
-app.use(
-  "/api/recommendations",
-  require("./routes/recommendations")
-);
+app.use("/api/recommendations", require("./routes/recommendations"));
 
 // ROUTES
 app.use("/api/agora", require("./routes/agora"));
@@ -217,10 +209,7 @@ app.use("/api", require("./routes"));
 // ============================================
 // ERROR HANDLER
 // ============================================
-const {
-  notFound,
-  errorHandler,
-} = require("./middleware/errorHandler");
+const { notFound, errorHandler } = require("./middleware/errorHandler");
 
 app.use(notFound);
 app.use(errorHandler);
