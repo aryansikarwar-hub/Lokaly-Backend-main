@@ -123,7 +123,7 @@ app.use(
     res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
     next();
   },
-  express.static(_path.join(process.cwd(), "uploads")) // FIX: using _path
+  express.static(__path.join(process.cwd(), "uploads")) // FIX: using _path
 );
 
 // ============================================
