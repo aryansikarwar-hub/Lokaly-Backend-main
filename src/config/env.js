@@ -1,3 +1,70 @@
+// require('dotenv').config();
+
+// const DEFAULT_JWT_SECRET = 'dev_insecure_secret_change_me';
+
+// const env = {
+//   nodeEnv: process.env.NODE_ENV || 'development',
+//   port: parseInt(process.env.PORT || '5000', 10),
+//   clientUrl: process.env.CLIENT_URL || '',
+//   mongoUri: process.env.MONGO_URI || '',
+//   jwt: {
+//     secret: process.env.JWT_SECRET || DEFAULT_JWT_SECRET,
+//     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
+//   },
+//   cloudinary: {
+//     cloudName: process.env.CLOUDINARY_CLOUD_NAME || '',
+//     apiKey: process.env.CLOUDINARY_API_KEY || '',
+//     apiSecret: process.env.CLOUDINARY_API_SECRET || '',
+//   },
+//   razorpay: {
+//     keyId: process.env.RAZORPAY_KEY_ID || '',
+//     keySecret: process.env.RAZORPAY_KEY_SECRET || '',
+//     webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || '',
+//   },
+//   agora: {
+//     appId: process.env.AGORA_APP_ID || '',
+//     appCert: process.env.AGORA_APP_CERTIFICATE|| '',
+//   },
+//   // 🆕 Recommendation API (HuggingFace-deployed AI model)
+//   recommendation: {
+//     apiUrl: process.env.RECOMMENDATION_API_URL || '',
+//     timeout: parseInt(process.env.RECOMMENDATION_API_TIMEOUT || '30000', 10),
+//   },
+// };
+
+// env.isProd = env.nodeEnv === 'production';
+
+// {
+//   const secret = process.env.JWT_SECRET;
+//   const weak = !secret || secret === DEFAULT_JWT_SECRET;
+//   if (env.isProd) {
+//     if (weak || secret.length < 16) {
+//       throw new Error(
+//         '[lokaly] FATAL: JWT_SECRET is missing, too short, or set to the insecure ' +
+//         'default in production. Set a strong JWT_SECRET (>=16 chars).'
+//       );
+//     }
+//   } else if (weak) {
+//     // eslint-disable-next-line no-console
+//     console.error(
+//       '[lokaly] WARN: JWT_SECRET is missing or set to the insecure default. ' +
+//       'Set a strong JWT_SECRET before deploying to production.'
+//     );
+//   }
+// }
+
+// // 🆕 Recommendation API warning (non-fatal, sirf warn karo)
+// if (!env.recommendation.apiUrl) {
+//   // eslint-disable-next-line no-console
+//   console.error(
+//     '[lokaly] WARN: RECOMMENDATION_API_URL is not set. ' +
+//     'AI recommendations will be unavailable until configured.'
+//   );
+// }
+
+// module.exports = env;
+
+
 require('dotenv').config();
 
 const DEFAULT_JWT_SECRET = 'dev_insecure_secret_change_me';
@@ -23,9 +90,8 @@ const env = {
   },
   agora: {
     appId: process.env.AGORA_APP_ID || '',
-    appCert: process.env.AGORA_APP_CERTIFICATE|| '',
+    appCert: process.env.AGORA_APP_CERTIFICATE || '',
   },
-  // 🆕 Recommendation API (HuggingFace-deployed AI model)
   recommendation: {
     apiUrl: process.env.RECOMMENDATION_API_URL || '',
     timeout: parseInt(process.env.RECOMMENDATION_API_TIMEOUT || '30000', 10),
@@ -45,7 +111,6 @@ env.isProd = env.nodeEnv === 'production';
       );
     }
   } else if (weak) {
-    // eslint-disable-next-line no-console
     console.error(
       '[lokaly] WARN: JWT_SECRET is missing or set to the insecure default. ' +
       'Set a strong JWT_SECRET before deploying to production.'
@@ -53,9 +118,7 @@ env.isProd = env.nodeEnv === 'production';
   }
 }
 
-// 🆕 Recommendation API warning (non-fatal, sirf warn karo)
 if (!env.recommendation.apiUrl) {
-  // eslint-disable-next-line no-console
   console.error(
     '[lokaly] WARN: RECOMMENDATION_API_URL is not set. ' +
     'AI recommendations will be unavailable until configured.'
