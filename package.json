@@ -43,6 +43,7 @@
     "razorpay": "^2.9.4",
     "resend": "^6.12.3",
     "socket.io": "^4.7.5",
+    "streamifier": "^0.1.1",
     "validator": "^13.12.0"
   },
   "devDependencies": {
