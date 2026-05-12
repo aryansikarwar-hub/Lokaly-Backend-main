@@ -1,3 +1,6 @@
+// routes/upload.js
+const express = require("express");
+const path = require("path");
 // backend/routes/uploadRoutes.js
 // =====================================================
 // Cloudinary-based upload route
@@ -15,10 +18,31 @@ const { cloudinary, isConfigured } = require("../config/cloudinary");
 
 const router = express.Router();
 
-// ============ AUTH MIDDLEWARE ============
-// ✅ Real JWT auth middleware
+// ✅ Real JWT auth
 const { requireAuth } = require("../middleware/auth");
 
+// ✅ Use the shared upload middleware (correct UPLOAD_ROOT path)
+const { upload, toPublicUrl } = require("../middleware/upload");
+
+// ============ SINGLE FILE UPLOAD ============
+router.post("/", requireAuth, upload.single("file"), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "Koi file nahi mili" });
+
+  const isVideo = req.file.mimetype.startsWith("video/");
+  const kind = isVideo ? "video" : "image";
+  const { url, publicId } = toPublicUrl(req.file);
+
+  console.log("[Upload] Success:", url, kind);
+
+  return res.json({
+    url,
+    publicId: publicId || "",
+    kind,
+    filename: req.file.filename,
+    size: req.file.size,
+    width: req.file.width || null,
+    height: req.file.height || null,
+    duration: req.file.duration || null,
 // ============ MULTER CONFIG ============
 const UPLOAD_DIR = path.join(__dirname, "..", "uploads");
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -167,19 +191,16 @@ router.post("/", (req, res) => {
 });
 
 // ============ MULTIPLE FILES ============
-router.post(
-  "/multi",
-  requireAuth,
-  upload.array("files", 10),
-  async (req, res) => {
-    if (!req.files?.length) return res.status(400).json({ error: "No files" });
+router.post("/multi", requireAuth, upload.array("files", 10), (req, res) => {
+  if (!req.files?.length) return res.status(400).json({ error: "No files" });
 
-    try {
-      const results = await Promise.all(
-        req.files.map(async (file) => {
-          const isVideo = file.mimetype.startsWith("video/");
-          const kind = isVideo ? "video" : "image";
+  const results = req.files.map((file) => {
+    const isVideo = file.mimetype.startsWith("video/");
+    const { url, publicId } = toPublicUrl(file);
+    return { url, publicId: publicId || "", kind: isVideo ? "video" : "image" };
+  });
 
+  return res.json({ files: results });
           if (cloudinary) {
             const r = await cloudinary.uploader.upload(file.path, {
               resource_type: isVideo ? "video" : "image",
