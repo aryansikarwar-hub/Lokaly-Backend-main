@@ -34,6 +34,7 @@ app.use("/api/upload", require("./routes/uploadRoutes"));
 app.use("/api/agora", require("./routes/agora"));
 app.use("/api/recommendations", require("./routes/recommendations"));
 app.use("/api/chat", require("./routes/chat"));
+app.use("/api/voice", require("./routes/voice"));
 app.use("/api", require("./routes"));
 
 const { notFound, errorHandler } = require("./middleware/errorHandler");
