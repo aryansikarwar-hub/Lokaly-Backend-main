@@ -22,5 +22,6 @@ router.use("/users", require("./userRoutes"));
 router.use("/notifications", require("./notificationRoutes"));
 router.use("/agora", require("./agora"));
 router.use("/cohosts", require("./coHostRoutes"));
+router.use("/wishlist", require("./wishlistRoute"));
 
 module.exports = router;
