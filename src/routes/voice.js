@@ -101,8 +101,18 @@ router.post('/parse', async (req, res) => {
       });
     }
 
+    // Run product search when:
+    //   - action is search, OR
+    //   - action is buy_now / add_to_cart but the user named a product in the
+    //     same utterance (e.g. "साड़ी ऑर्डर करनी") — surface candidates so the
+    //     frontend can let the user pick which one to buy.
     let results = [];
-    if (intent.action === 'search') {
+    const wantsProductLookup =
+      intent.action === 'search' ||
+      ((intent.action === 'buy_now' || intent.action === 'add_to_cart') &&
+        Array.isArray(intent.keywords) && intent.keywords.length > 0);
+
+    if (wantsProductLookup) {
       results = await searchByIntent(intent);
       // If no hits and we had a budget, retry without budget (so we always
       // surface at least something — UX over strict filtering).

@@ -173,9 +173,15 @@ function expandQueryTerms(query) {
   const raw = lower
     .split(/[\s\-_,.;:!?]+/)
     .map((t) => t.trim())
-    .filter((t) => t.length >= 2 && !/^\d+$/.test(t));
+    // Keep short numerics (model numbers like "17", "S24") — they help
+    // disambiguate "iPhone 17" from "iPhone 14". Drop only single chars.
+    .filter((t) => t.length >= 2);
 
-  const stopwords = new Set(['the', 'and', 'for', 'under', 'with', 'from', 'into', 'over', 'best', 'cheap']);
+  const stopwords = new Set([
+    'the', 'and', 'for', 'under', 'with', 'from', 'into', 'over', 'best', 'cheap',
+    'mujhe', 'chahiye', 'hai', 'ka', 'ke', 'ki', 'me', 'mein', 'se', 'ko',
+    'aur', 'bhi', 'kya', 'koi', 'kuch', 'wala', 'wali', 'wale',
+  ]);
   const filtered = raw.filter((t) => !stopwords.has(t));
 
   // Hindi/Hinglish synonyms expand karo
@@ -234,7 +240,7 @@ async function localFallbackSearch(query, { limit = 8 } = {}) {
       .limit(limit * 4)
       .lean();
 
-    return products
+    const scored = products
       .map((p) => {
         const hay = `${p.title} ${p.description || ''} ${p.category || ''} ${(p.tags || []).join(' ')} ${p.slug || ''}`.toLowerCase();
         const hits = terms.filter((t) => hay.includes(t)).length;
@@ -243,11 +249,47 @@ async function localFallbackSearch(query, { limit = 8 } = {}) {
         return { product: p, hits, score: hits + titleHits * 2 + categoryBoost };
       })
       .filter((x) => x.hits > 0 || (categoryHint && x.score > 0))
-      .sort((a, b) => b.score - a.score)
+      .sort((a, b) => b.score - a.score);
+
+    let primary = scored
       .slice(0, limit)
       .map(({ product, hits }) =>
         shapeFromDB({ match_score: Math.min(100, Math.round((hits / terms.length) * 100)) }, product),
       );
+
+    // Category-sibling padding: if we got 1-3 hits, fetch more from the same
+    // categories so the user sees a richer comparison set. Common case: "iPhone
+    // 17" matches 1 product, but the buyer also wants to see iPhone 16 / Galaxy
+    // / other phones in the Electronics category.
+    if (primary.length > 0 && primary.length < 4) {
+      const seen = new Set(primary.map((p) => String(p._id)));
+      const cats = Array.from(
+        new Set(
+          scored
+            .slice(0, 3)
+            .map((s) => s.product.category)
+            .filter(Boolean),
+        ),
+      );
+      if (cats.length > 0) {
+        const siblings = await Product.find({
+          isActive: true,
+          category: { $in: cats.map((c) => new RegExp(`^${escapeRegex(c)}$`, 'i')) },
+          _id: { $nin: Array.from(seen) },
+        })
+          .populate('seller', 'shopName isVerifiedSeller')
+          .select(PRODUCT_SELECT)
+          .sort({ rating: -1, salesCount: -1, createdAt: -1 })
+          .limit(limit - primary.length)
+          .lean();
+        const padded = siblings.map((p) =>
+          shapeFromDB({ match_score: 60 }, p),
+        );
+        primary = primary.concat(padded);
+      }
+    }
+
+    return primary;
   } catch (err) {
     logger.warn('Local fallback search failed:', err.message);
     return [];
